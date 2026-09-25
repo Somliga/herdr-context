@@ -204,9 +204,14 @@ func TestGraftedSessionIndentsOneLevelAndStaysThere(t *testing.T) {
 			t.Fatalf("%s (body) at depth %d want 1", id, byID[id].Depth)
 		}
 	}
+	// §5.3e: the branch's header sits one level under the head (with the
+	// body), its turns one under that, and every turn of it stays there.
+	if h := headerDepth(byID["m1"]); h != 1 {
+		t.Fatalf("m1's header at depth %d want 1", h)
+	}
 	for _, id := range []string{"m1", "m2", "m3"} {
-		if byID[id].Depth != 1 {
-			t.Fatalf("%s at depth %d want 1: grafted session should sit one level deeper (than the head, same as the body), and stay there for every turn of it", id, byID[id].Depth)
+		if byID[id].Depth != 2 {
+			t.Fatalf("%s at depth %d want 2: a grafted session's turns sit one level under its header, and stay there for every turn of it", id, byID[id].Depth)
 		}
 	}
 	_ = child
@@ -227,8 +232,8 @@ func TestTwoGraftsFromTheSameTurnShareADepth(t *testing.T) {
 	if byID["a1"].Depth != byID["b1"].Depth {
 		t.Fatalf("two branches taken from the same turn should sit at the same depth: a1=%d b1=%d", byID["a1"].Depth, byID["b1"].Depth)
 	}
-	if byID["a1"].Depth != 1 {
-		t.Fatalf("depth %d want 1", byID["a1"].Depth)
+	if byID["a1"].Depth != 2 {
+		t.Fatalf("depth %d want 2 (header at 1, §5.3e)", byID["a1"].Depth)
 	}
 }
 
@@ -251,8 +256,8 @@ func TestMaxDepthTracksGraftNestingNotTurnCount(t *testing.T) {
 			max = r.Depth
 		}
 	}
-	if max != 2 {
-		t.Fatalf("max depth %d want 2 — two nested graft edges, not the 13-turn total", max)
+	if max != 4 {
+		t.Fatalf("max depth %d want 4 — two nested graft edges of two levels each (header, turns: §5.3e), not the 13-turn total", max)
 	}
 }
 
@@ -395,8 +400,8 @@ func TestABranchThatDivergesOnAReplyStillShowsTheReply(t *testing.T) {
 	if !reply.Node.Grafted || !reply.Node.IsSessionRoot {
 		t.Fatalf("reply must carry the branch's start marker: %+v", reply.Node)
 	}
-	if reply.Depth != byID["n1"].Depth+1 {
-		t.Fatalf("reply must render one level under trunk's n1: reply depth %d, n1 depth %d", reply.Depth, byID["n1"].Depth)
+	if headerDepth(reply) != byID["n1"].Depth+1 || reply.Depth != byID["n1"].Depth+2 {
+		t.Fatalf("reply's header must render one level under trunk's n1, the reply under its header: reply depth %d, n1 depth %d", reply.Depth, byID["n1"].Depth)
 	}
 	if byID["next-head"].Node.Grafted || byID["next-head"].Node.IsSessionRoot {
 		t.Fatalf("next-head is not the branch's start, reply is: %+v", byID["next-head"].Node)
@@ -680,8 +685,8 @@ func TestGraftFromABodyTurnIndentsOneLevelUnderItsHead(t *testing.T) {
 	if byID["h0-b0"].Depth != 1 {
 		t.Fatalf("h0-b0 (body) depth %d want 1", byID["h0-b0"].Depth)
 	}
-	if byID["m1"].Depth != 1 {
-		t.Fatalf("a graft off a body row is lifted to its head's depth+1, same as the body row: got %d want 1", byID["m1"].Depth)
+	if headerDepth(byID["m1"]) != 1 {
+		t.Fatalf("a graft off a body row is lifted: its header at its head's depth+1, same as the body row: got %d want 1", headerDepth(byID["m1"]))
 	}
 }
 
@@ -712,8 +717,8 @@ func TestGraftFromAToolCallBodyNodeStaysVisibleWhenFolded(t *testing.T) {
 	if !ok {
 		t.Fatal("the graft off a tool-call body row is invisible while its head is folded")
 	}
-	if m1.Depth != h0.Depth+1 {
-		t.Fatalf("a graft off a tool-call body row is lifted to its head's depth+1: got %d want %d", m1.Depth, h0.Depth+1)
+	if headerDepth(m1) != h0.Depth+1 {
+		t.Fatalf("a graft off a tool-call body row is lifted: its header at its head's depth+1: got %d want %d", headerDepth(m1), h0.Depth+1)
 	}
 	if _, ok := byID["h0-b1"]; ok {
 		t.Fatal("h0-b1 itself (the tool call the graft left) should stay hidden while h0 is folded")
@@ -747,8 +752,8 @@ func TestOldStyleGraftAtAPromptRendersLikeANewOne(t *testing.T) {
 	if !ok {
 		t.Fatal("an old-style graft directly at the head is invisible while it is folded")
 	}
-	if m1.Depth != h0.Depth+1 {
-		t.Fatalf("an old-style graft at the head: got depth %d want %d", m1.Depth, h0.Depth+1)
+	if headerDepth(m1) != h0.Depth+1 {
+		t.Fatalf("an old-style graft at the head: got header depth %d want %d", headerDepth(m1), h0.Depth+1)
 	}
 }
 
@@ -783,8 +788,8 @@ func TestGraftedChildIndentsOneLevelInAScopedView(t *testing.T) {
 	if byID["n2"].Depth != 1 {
 		t.Fatalf("s1's own body depth %d want 1", byID["n2"].Depth)
 	}
-	if byID["m1"].Depth != 1 {
-		t.Fatalf("grafted child depth %d want 1 (same as the body it left, lifted under the head)", byID["m1"].Depth)
+	if headerDepth(byID["m1"]) != 1 {
+		t.Fatalf("grafted child's header depth %d want 1 (same as the body it left, lifted under the head)", headerDepth(byID["m1"]))
 	}
 }
 
@@ -813,8 +818,8 @@ func TestATrunkGraftIsIndentedButKeepsTheBar(t *testing.T) {
 				t.Fatalf("the root session stays at depth 0 with the bar; %s is at %d onTrunk=%v", r.Node.Node.ID, r.Depth, r.OnTrunk)
 			}
 		case "graft":
-			if r.Depth != 1 || !r.OnTrunk {
-				t.Fatalf("the trunk graft is indented but keeps the bar; %s is at %d onTrunk=%v", r.Node.Node.ID, r.Depth, r.OnTrunk)
+			if r.Depth != 2 || !r.OnTrunk {
+				t.Fatalf("the trunk graft is indented (header 1, turns 2) but keeps the bar; %s is at %d onTrunk=%v", r.Node.Node.ID, r.Depth, r.OnTrunk)
 			}
 		}
 	}
@@ -836,8 +841,8 @@ func TestOffTrunkBranchIsIndentedAtItsDivergence(t *testing.T) {
 			t.Fatal("root is on the trunk and the row should say so")
 		}
 	}
-	if sideDepth != 1 {
-		t.Fatalf("an off-trunk branch indents once; got %d", sideDepth)
+	if sideDepth != 2 {
+		t.Fatalf("an off-trunk branch indents once (its turns under its header); got %d", sideDepth)
 	}
 }
 
@@ -851,8 +856,8 @@ func TestNoTrunkFallsBackToV1(t *testing.T) {
 	for _, r := range m.Rows() {
 		depths[r.Node.SessionID] = r.Depth
 	}
-	if depths["graft"] != 1 {
-		t.Fatalf("with no trunk the v1 shape stands; graft at %d want 1", depths["graft"])
+	if depths["graft"] != 2 {
+		t.Fatalf("with no trunk the v1 shape stands; graft at %d want 2 (under its header)", depths["graft"])
 	}
 }
 
@@ -885,7 +890,7 @@ func TestAbandonedTailRendersAtTheRootDepthWithNoBar(t *testing.T) {
 	if at["s3"].OnTrunk {
 		t.Fatal("the abandoned tail is not on the trunk")
 	}
-	if at["n1"].Depth != 1 || !at["n1"].OnTrunk {
+	if at["n1"].Depth != 2 || !at["n1"].OnTrunk {
 		t.Fatalf("the rewound session is the main line, indented like any branch; n1 at %d onTrunk=%v", at["n1"].Depth, at["n1"].OnTrunk)
 	}
 	if order[2] != "n1" || order[3] != "s3" {

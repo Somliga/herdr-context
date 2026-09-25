@@ -289,11 +289,16 @@ func cursorTo(t *testing.T, u uiModel, sid, id string) uiModel {
 }
 
 // screen is every row as the user sees it, unfolded, with its cut marker.
+// A row with a header line (§5.3e) is both lines, header first, so an index
+// is still a row and a join is still the screen.
 func screen(u uiModel) []string {
 	unfold(u)
 	var out []string
 	for _, r := range u.m.Rows() {
 		line, _ := renderRow(r, false, u.current, 0)
+		if h := headerLine(r, 0); h != "" {
+			line = h + "\n" + line
+		}
 		out = append(out, line+cutNote(r.Node))
 	}
 	return out
@@ -409,9 +414,9 @@ func checkHangsUnder(t *testing.T, u uiModel, child, first, parent, at string) {
 	for after < len(rows) && rows[after].Node.SessionID == rows[head].Node.SessionID && !rows[after].Node.IsHead {
 		after++
 	}
-	if c != after || rows[c].Depth != rows[head].Depth+1 {
-		t.Errorf("%s at row %d depth %d, want right after %s's turn's body (row %d, head %s at row %d depth %d), one level under it:\n%s",
-			shortID(child), c, rows[c].Depth, shortID(parent), after, rows[head].Node.Node.ID, head, rows[head].Depth, strings.Join(screen(u), "\n"))
+	if c != after || headerDepth(rows[c]) != rows[head].Depth+1 {
+		t.Errorf("%s at row %d header depth %d, want right after %s's turn's body (row %d, head %s at row %d depth %d), its header one level under it:\n%s",
+			shortID(child), c, headerDepth(rows[c]), shortID(parent), after, rows[head].Node.Node.ID, head, rows[head].Depth, strings.Join(screen(u), "\n"))
 	}
 }
 
@@ -576,7 +581,7 @@ func TestScenarioBranchAtBulldogIndentsAndTheTailDoesNot(t *testing.T) {
 		t.Fatalf("TRIPPLEDIP-p not on screen folded:\n%s", strings.Join(screen(u), "\n"))
 	}
 
-	if branchRow.Depth != bulldogRow.Depth+1 || !branchRow.OnTrunk {
+	if headerDepth(branchRow) != bulldogRow.Depth+1 || !branchRow.OnTrunk {
 		t.Fatalf("the branch at BULLDOG must be indented exactly one level under it with the bar: %+v vs BULLDOG's %+v", branchRow, bulldogRow)
 	}
 	if tailRow.Depth != bulldogRow.Depth || tailRow.OnTrunk {
@@ -1230,7 +1235,7 @@ func checkOneRowBranchUnder(t *testing.T, w *world, u uiModel, at string) {
 				mine = append(mine, r)
 			}
 		}
-		if len(head) != 1 || len(mine) != 1 || mine[0].Depth != head[0].Depth+1 {
+		if len(head) != 1 || len(mine) != 1 || headerDepth(mine[0]) != head[0].Depth+1 {
 			t.Fatalf("folded=%v: want one branch row one level under %s, got %+v under %+v", folded, at, mine, head)
 		}
 	}
@@ -1282,7 +1287,7 @@ func TestBranchHereMidLineShowsTheBranch(t *testing.T) {
 			mine = append(mine, r)
 		}
 	}
-	if len(head) != 1 || len(mine) != 1 || mine[0].Depth != head[0].Depth+1 {
+	if len(head) != 1 || len(mine) != 1 || headerDepth(mine[0]) != head[0].Depth+1 {
 		t.Fatalf("want the branch's seed one level under TRIPPLEDIP, got %+v under %+v", mine, head)
 	}
 }
@@ -1381,5 +1386,144 @@ func TestADropInRealShapedTurnsMarksTheNextPrompt(t *testing.T) {
 	r := w.replacement(sidT)
 	if got := rowText(u, r, "BULLDOG-p"); !strings.Contains(got, "✂ 1 turns dropped before this") {
 		t.Fatalf("row after the drop %q, want the ✂ marker:\n%s", got, strings.Join(screen(u), "\n"))
+	}
+}
+
+// headersFamily is the family the user drew for §5.3e: a trunk NUGGET,
+// TRIPPLEDIP; a branch off TRIPPLEDIP with BEATS, BEATS22 (current); and a
+// sibling off TRIPPLEDIP with HORSE, HORSE22. It returns the overlay opened
+// on the first branch, folded, and the two branch ids.
+func headersFamily(t *testing.T) (uiModel, string, string) {
+	w := newWorld(t)
+	w.trunk(sidT, "NUGGET", "TRIPPLEDIP")
+	b := w.branch(sidT, sidT, "TRIPPLEDIP-p")
+	w.typeInto(b, "BEATS", "BEATS22")
+	c := w.branch(sidT, sidT, "TRIPPLEDIP-p")
+	w.typeInto(c, "HORSE", "HORSE22")
+	u := w.open(b)
+	u.width, u.height = 120, 40
+	return u, b, c
+}
+
+// rowLines is View's row area: every line before the blank line above the
+// counter, the cursor column dropped.
+func rowLines(t *testing.T, u uiModel) (lines []string, cursor int) {
+	t.Helper()
+	cursor = -1
+	for i, l := range strings.Split(u.View(), "\n") {
+		if l == "" {
+			break
+		}
+		if strings.HasPrefix(l, "> ") {
+			if cursor >= 0 {
+				t.Fatalf("two cursor lines:\n%s", u.View())
+			}
+			cursor = i
+		}
+		lines = append(lines, l[2:])
+	}
+	return lines, cursor
+}
+
+// TestEachSessionStartsWithItsOwnHeaderLine is the picture the user approved
+// for §5.3e, drawn by View from real files.
+func TestEachSessionStartsWithItsOwnHeaderLine(t *testing.T) {
+	u, b, c := headersFamily(t)
+	got, _ := rowLines(t, u)
+	want := []string{
+		"▎ " + shortID(sidT),
+		"▎ ▸ user: prompt NUGGET  (2)",
+		"▎ ▸ user: prompt TRIPPLEDIP  (2)",
+		"▎   ↳ " + shortID(b),
+		"▎     ▸ user: prompt BEATS  (2)",
+		"▎     ▸ user: prompt BEATS22  (2)",
+		"    ↳ " + shortID(c),
+		"      ▸ user: prompt HORSE  (2)",
+		"      ▸ user: prompt HORSE22  (2)",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// The header is part of its turn's row: ↑↓ step over it, the cursor is never
+// on it, and the counter counts rows.
+func TestTheCursorNeverSitsOnAHeader(t *testing.T) {
+	u, _, _ := headersFamily(t)
+	u.m.Cursor = 0
+	total := len(u.m.Rows())
+	if total != 6 {
+		t.Fatalf("%d rows, want 6 (headers are not rows)", total)
+	}
+	for i := 0; i < total; i++ {
+		lines, cur := rowLines(t, u)
+		if cur < 0 || !strings.Contains(lines[cur], "user: prompt") {
+			t.Fatalf("row %d: the cursor is on %q, not a turn:\n%s", i, lines[max(cur, 0)], u.View())
+		}
+		if want := fmt.Sprintf("(%d/%d)", i+1, total); !strings.Contains(u.View(), want) {
+			t.Fatalf("counter is not %s:\n%s", want, u.View())
+		}
+		u = drive(t, u, down)
+	}
+	if u.m.Cursor != total-1 {
+		t.Fatalf("↓ past the end moved the cursor to %d", u.m.Cursor)
+	}
+}
+
+// The viewport fits lines, not rows: a header never pushes the cursor's row
+// off screen, and the header of the cursor's row is drawn with it.
+func TestTheWindowFitsLinesAndKeepsTheCursorsHeader(t *testing.T) {
+	u, _, _ := headersFamily(t)
+	u.height = 9 // five lines of rows
+	for i := range u.m.Rows() {
+		u.m.Cursor = i
+		lines, cur := rowLines(t, u)
+		if len(lines) > 5 {
+			t.Fatalf("cursor %d: %d lines of rows in a five-line viewport:\n%s", i, len(lines), u.View())
+		}
+		if cur < 0 {
+			t.Fatalf("cursor %d is off screen:\n%s", i, u.View())
+		}
+		if h := headerLine(u.m.Rows()[i], 0); h != "" && (cur == 0 || !strings.HasSuffix(lines[cur-1], h)) {
+			t.Fatalf("cursor %d: its header %q is not drawn above it:\n%s", i, h, u.View())
+		}
+	}
+}
+
+// ⏎, b and s on a branch's first turn act on that turn, not on its header.
+func TestKeysOnABranchsFirstTurnActOnTheTurn(t *testing.T) {
+	u, b, _ := headersFamily(t)
+	at := -1
+	for i, r := range u.m.Rows() {
+		if r.Node.SessionID == b && r.Node.Node.ID == "BEATS-p" {
+			at = i
+		}
+	}
+	if at < 0 {
+		t.Fatal("no BEATS row")
+	}
+	u.m.Cursor = at
+
+	if got := drive(t, u, enter); !strings.Contains(got.confirm, `"prompt BEATS"`) {
+		t.Errorf("⏎ confirms %q, want BEATS", got.confirm)
+	}
+	if got := drive(t, u, key('s')); got.m.RangeEnd == nil || got.m.RangeEnd.Node.ID != "BEATS-p" {
+		t.Errorf("s fixed the range end at %+v, want BEATS-p", got.m.RangeEnd)
+	}
+	u.m.CancelRange() // u.m is shared with the s above
+	u.m.Cursor = at
+	drive(t, u, key('b'))
+	st, err := store.Load(u.repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, br := range st.Branches {
+		if br.GraftedFrom.SessionID == b && strings.HasPrefix(br.GraftedFrom.Node, "BEATS-") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("b did not branch at BEATS: %+v", st.Branches)
 	}
 }

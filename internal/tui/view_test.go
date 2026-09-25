@@ -38,12 +38,13 @@ func TestRenderRowShowsSessionIdOnRoots(t *testing.T) {
 		Node: adapter.Node{ID: "n1", Title: "x"},
 		SessionID: "82cb69f2-e18b-4f86-874a-89e93139324a", IsSessionRoot: true,
 	}
-	got, _ := renderRow(Row{Node: n}, false, "", 80)
-	if !strings.Contains(got, "82cb69f2") {
-		t.Fatalf("short session id missing: %q", got)
+	// §5.3e: the id is on the root's header line, not on its turn.
+	got := headerLine(Row{Node: n}, 80)
+	if got != "82cb69f2" {
+		t.Fatalf("header line %q, want the short session id alone", got)
 	}
-	if strings.Contains(got, "e18b") {
-		t.Fatalf("full uuid should not be shown: %q", got)
+	if line, _ := renderRow(Row{Node: n}, false, "", 80); strings.Contains(line, "82cb69f2") {
+		t.Fatalf("the id is on the turn's own line too: %q", line)
 	}
 }
 
@@ -60,9 +61,12 @@ func TestRenderRowMarksGraft(t *testing.T) {
 		Node: adapter.Node{ID: "m1", Title: "alt"},
 		SessionID: "f2af34a4-x", IsSessionRoot: true, Grafted: true,
 	}
-	got, _ := renderRow(Row{Node: n, Depth: 2}, false, "", 80)
-	if !strings.Contains(got, "↳") {
-		t.Fatalf("graft marker missing: %q", got)
+	// §5.3e: a branch's header sits one level out from its turn.
+	if got := headerLine(Row{Node: n, Depth: 2}, 80); got != "  ↳ f2af34a4" {
+		t.Fatalf("header line %q, want %q", got, "  ↳ f2af34a4")
+	}
+	if got, _ := renderRow(Row{Node: n, Depth: 2}, false, "", 80); got != "    user: alt" {
+		t.Fatalf("turn line %q, want %q", got, "    user: alt")
 	}
 }
 
@@ -321,9 +325,14 @@ func TestTrunkBarMarksExactlyThePathThroughTheFamily(t *testing.T) {
 
 	rows := u.m.Rows()
 	lines := strings.Split(u.View(), "\n")
-	byTitle := map[string]int{}
-	for i, r := range rows {
-		byTitle[r.Node.Node.Title] = i
+	// A row with a header is two lines (§5.3e): byTitle is the turn's line.
+	byTitle, line := map[string]int{}, 0
+	for _, r := range rows {
+		if headerLine(r, 0) != "" {
+			line++
+		}
+		byTitle[r.Node.Node.Title] = line
+		line++
 	}
 	onBar := func(title string) bool {
 		i, ok := byTitle["turn "+title]
@@ -1245,8 +1254,9 @@ func TestRenderRowShowsCutsAndRemovedOrigins(t *testing.T) {
 		t.Fatalf("cutNote(CutAfter) = %q", got)
 	}
 	orphan := &tree.Node{Node: adapter.Node{ID: "b1", Title: "b"}, SessionID: "br", IsSessionRoot: true, FromRemoved: true}
-	if got, _ := renderRow(Row{Node: orphan}, false, "", 120); !strings.Contains(got, "from a removed stretch") {
-		t.Fatalf("removed-origin marker missing: %q", got)
+	// §5.3e: the marker belongs on the header, beside the id.
+	if got := headerLine(Row{Node: orphan}, 120); got != "br  from a removed stretch" {
+		t.Fatalf("removed-origin header %q", got)
 	}
 }
 

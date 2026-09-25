@@ -83,15 +83,6 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 	if r.Node.Broken {
 		b.WriteString("⚠ ")
 	}
-	if r.Node.Grafted {
-		b.WriteString("↳ ")
-	}
-	if r.Node.IsSessionRoot {
-		b.WriteString(shortID(r.Node.SessionID) + "  ")
-	}
-	if r.Node.FromRemoved {
-		b.WriteString("from a removed stretch  ")
-	}
 	if r.HasChildren && r.Folded {
 		b.WriteString("▸ ")
 	}
@@ -111,7 +102,7 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 		// that prefix is present, and GraftSeeded refuses a seed without it.
 		// Prepending another produced "⤶ ⤶ merged from …".
 	default:
-		if !r.Node.IsSessionRoot {
+		if !r.Node.Broken {
 			b.WriteString("user: ")
 		}
 	}
@@ -147,6 +138,32 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 		key = StyleRange
 	}
 	return line, key
+}
+
+// headerLine is the line drawn above a session's first shown row (§5.3e):
+// "↳ <id>" for a branch, "<id>" for a root line, "" for every other row. Plain
+// text like renderRow, and truncated to width the same way.
+func headerLine(r Row, width int) string {
+	if !r.Node.IsSessionRoot {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(strings.Repeat("  ", headerDepth(r)))
+	if r.Node.Broken {
+		b.WriteString("⚠ ")
+	}
+	if r.Node.Grafted {
+		b.WriteString("↳ ")
+	}
+	b.WriteString(shortID(r.Node.SessionID))
+	if r.Node.FromRemoved {
+		b.WriteString("  from a removed stretch")
+	}
+	line := b.String()
+	if width > 0 && len([]rune(line)) > width {
+		line = string([]rune(line)[:width-1]) + "…"
+	}
+	return line
 }
 
 // rowBar is the left-margin bar marking the row's place on the trunk
@@ -850,6 +867,9 @@ func (u uiModel) View() string {
 		bar := rowBar(r, hasCurrent)
 		if r.OnTrunk {
 			bar = render(StyleTrunk, bar)
+		}
+		if h := headerLine(r, u.width-2-barWidth); h != "" {
+			b.WriteString("  " + bar + h + "\n")
 		}
 		text, key := renderRow(r, start+i == u.m.Cursor, u.current, u.width-2-barWidth)
 		b.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)) + "\n")

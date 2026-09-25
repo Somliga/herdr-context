@@ -184,18 +184,31 @@ func (m *Model) Window(height int) ([]Row, int, int) {
 	if height < 1 {
 		height = 1
 	}
-	if len(rows) <= height {
-		return rows, 0, len(rows)
+	// A row with a header is two lines (§5.3e), so this fits lines, not rows.
+	lines := func(i int) int {
+		if rows[i].Node.IsSessionRoot {
+			return 2
+		}
+		return 1
 	}
-	half := height / 2
-	start := m.Cursor - half
-	if start < 0 {
-		start = 0
+	if len(rows) == 0 {
+		return rows, 0, 0
 	}
-	if start > len(rows)-height {
-		start = len(rows) - height
+	m.clamp()
+	start, end, used := m.Cursor, m.Cursor+1, lines(m.Cursor)
+	for start > 0 && used-lines(m.Cursor)+lines(start-1) <= height/2 {
+		start--
+		used += lines(start)
 	}
-	return rows[start : start+height], start, len(rows)
+	for end < len(rows) && used+lines(end) <= height {
+		used += lines(end)
+		end++
+	}
+	for start > 0 && used+lines(start-1) <= height {
+		start--
+		used += lines(start)
+	}
+	return rows[start:end], start, len(rows)
 }
 
 // New indexes each node's parent so Fold can jump upward.
@@ -419,7 +432,9 @@ func bodyGrafts(n *tree.Node) []*tree.Node {
 func childDepth(n, c *tree.Node, depth int) int {
 	switch {
 	case c.SessionID != n.SessionID:
-		return depth + 1 // a branch, wherever it sits relative to the trunk
+		// A branch, wherever it sits relative to the trunk: its header one
+		// level under the turn it left, its turns one under that (§5.3e).
+		return depth + 2
 	case n.IsHead && !c.IsHead && !n.Superseded:
 		// This section's body — but only when n itself gets a row to indent
 		// under. n.Superseded means n is a branch's copy of a turn its
@@ -429,6 +444,16 @@ func childDepth(n, c *tree.Node, depth int) int {
 		return depth + 1
 	}
 	return depth
+}
+
+// headerDepth is the depth of r's header line, or r's own depth when it has
+// none: a branch's header sits one level out from its turns, a root line's
+// at its turns' level (§5.3e).
+func headerDepth(r Row) int {
+	if r.Node.IsSessionRoot && r.Node.Grafted {
+		return r.Depth - 1
+	}
+	return r.Depth
 }
 
 // Rows flattens the visible forest depth-first.
@@ -533,9 +558,11 @@ func (m *Model) Fold() {
 	// Jump to the row drawn one level out: the nearest row above with a
 	// smaller Depth. That is what the screen shows as the parent, whatever
 	// the graph says (a lifted graft, a Superseded or folded-away ancestor).
+	// A branch's header line is drawn one level out from its turns and
+	// belongs to its first turn's row (§5.3e), so it counts at its own depth.
 	rows := m.Rows()
 	for i := m.Cursor - 1; i >= 0; i-- {
-		if rows[i].Depth < rows[m.Cursor].Depth {
+		if headerDepth(rows[i]) < headerDepth(rows[m.Cursor]) {
 			m.Cursor = i
 			return
 		}
