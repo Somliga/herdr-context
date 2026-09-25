@@ -419,16 +419,8 @@ func (u *uiModel) liveCheck(sessionID string) bool {
 var rangeMenu = []string{
 	"squash — replace these turns with a summary",
 	"squash into… — summarise, put it in another line, drop it here",
-	"move — carry these turns, as they are, to another place",
 	"drop — remove these turns",
 }
-
-// kindMove names move in the range menu. Like kindFold it is not a store
-// kind: a move writes a KindMoved line, and for another line a KindCut here.
-const kindMove = "move"
-
-// rangeKinds is what each rangeMenu entry does, by position.
-var rangeKinds = []string{store.KindCompacted, kindFold, kindMove, store.KindCut}
 var placeMenu = []string{"merge here", "branch here"}
 
 func menuView(heading string, options []string, idx int) string {
@@ -549,51 +541,21 @@ func (u uiModel) foldAt(at *tree.Node, sum store.Summary) (tea.Model, tea.Cmd) {
 	return u, nil
 }
 
-// carry is move's hand (§2.8): the turns picked up, until ⏎ puts them down
-// or esc puts them back. rows are every node of those turns, for the
-// preview; nothing is written until ⏎.
+// carry is move's hand (§2.8): the one section picked up, until ⏎ puts it
+// down or esc puts it back. rows are its head and body, for the preview;
+// nothing is written until ⏎.
 type carry struct {
-	src      adapter.Session
-	from, to *tree.Node
-	turns    int
-	rows     map[*tree.Node]bool
-	heads    []*tree.Node // the rows that open each turn, in order
+	src  adapter.Session
+	n    *tree.Node // the row m was pressed on
+	head *tree.Node
+	rows map[*tree.Node]bool
 }
 
-// turnRows is every node of the whole turns from..to spans, in order: from's
-// turn from its head, up to the head that follows to's. Folds do not matter.
-func (u uiModel) turnRows(from, to *tree.Node) []*tree.Node {
-	all := *u.m
-	all.Folded, all.Filter, all.RangeEnd = map[*tree.Node]bool{}, FilterDefault, nil
-	head := from
-	if !from.IsHead && u.m.parent[from] != nil {
-		head = u.m.parent[from]
-	}
-	var out []*tree.Node
-	started, pastTo := false, false
-	for _, r := range all.Rows() {
-		n := r.Node
-		if n.SessionID != from.SessionID {
-			continue
-		}
-		started = started || n == head
-		if !started {
-			continue
-		}
-		if pastTo && n.IsHead {
-			break
-		}
-		out = append(out, n)
-		pastTo = pastTo || n == to
-	}
-	return out
-}
-
-// pickUp is m on a turn, or move on a range (§2.8): the widened turns are
-// in hand and nothing is written.
-func (u uiModel) pickUp(from, to *tree.Node) (tea.Model, tea.Cmd) {
-	src := adapter.Session{ID: to.SessionID, CWD: to.SessionCWD, Path: to.SessionPath}
-	sp, err := u.a.Widen(src, from.Node.ID, to.Node.ID)
+// pickUp is m on a row (§2.8): its whole section is in hand and nothing is
+// written. A stretch of turns is squashed first, then moved as one section.
+func (u uiModel) pickUp(n *tree.Node) (tea.Model, tea.Cmd) {
+	src := adapter.Session{ID: n.SessionID, CWD: n.SessionCWD, Path: n.SessionPath}
+	sp, err := u.a.Widen(src, n.Node.ID, n.Node.ID)
 	if err != nil {
 		u.status = "cannot move this: " + err.Error()
 		return u, nil
@@ -602,36 +564,43 @@ func (u uiModel) pickUp(from, to *tree.Node) (tea.Model, tea.Cmd) {
 		u.status = "only whole turns move — this is before the first prompt"
 		return u, nil
 	}
-	mv := &carry{src: src, from: from, to: to, turns: sp.Last - sp.First + 1, rows: map[*tree.Node]bool{}}
-	for _, n := range u.turnRows(from, to) {
-		mv.rows[n] = true
-		if n.IsHead {
-			mv.heads = append(mv.heads, n)
+	head := n
+	if !n.IsHead && u.m.parent[n] != nil {
+		head = u.m.parent[n]
+	}
+	mv := &carry{src: src, n: n, head: head, rows: map[*tree.Node]bool{head: true}}
+	var body func(h *tree.Node)
+	body = func(h *tree.Node) {
+		for _, c := range h.Children {
+			if c.SessionID == head.SessionID && !c.IsHead && !mv.rows[c] {
+				mv.rows[c] = true
+				body(c)
+			}
 		}
 	}
-	u.m.CancelRange()
+	body(head)
 	u.moving = mv
-	u.status = fmt.Sprintf("moving %d turns — ⏎ puts them here · esc puts them back", mv.turns)
+	u.status = "moving 1 turn — ⏎ puts it here · esc puts it back"
 	return u, nil
 }
 
-// putDown is ⏎ while moving: the turns go after at's whole turn. Within the
-// line it is one splice. Into another line it is carryCmd. A refusal — at is
-// inside the turns, or right before them, or the move would empty its line —
-// comes back from the splice with nothing written, and the turns stay in
-// hand: only a reload lets go of them.
+// putDown is ⏎ while moving: the section goes after at's whole turn. Within
+// the line it is one splice. Into another line it is carryCmd. A refusal — at
+// is the section itself, or the turn right before it, or the move would empty
+// its line — comes back from the splice with nothing written, and the
+// section stays in hand: only a reload lets go of it.
 func (u uiModel) putDown(at *tree.Node) (tea.Model, tea.Cmd) {
 	mv := u.moving
 	dst := adapter.Session{ID: at.SessionID, CWD: at.SessionCWD, Path: at.SessionPath}
 	src := mv.src
-	ins := editOp{src: dst, edit: adapter.Edit{From: mv.from.Node.ID, To: mv.to.Node.ID, After: at.Node.ID, Carry: &src},
+	ins := editOp{src: dst, edit: adapter.Edit{From: mv.n.Node.ID, To: mv.n.Node.ID, After: at.Node.ID, Carry: &src},
 		kind: store.KindMoved, dst: u.dstCWD(at), title: "⇢ move"}
 	u.busy = "moving…"
 	if dst.ID == src.ID {
 		return u, editCmd(u.a, u.st, ins, u.live)
 	}
-	drop := editOp{src: src, edit: adapter.Edit{From: mv.from.Node.ID, To: mv.to.Node.ID}, kind: store.KindCut,
-		dst: u.dstCWD(mv.to), title: "✂ drop"}
+	drop := editOp{src: src, edit: adapter.Edit{From: mv.n.Node.ID, To: mv.n.Node.ID}, kind: store.KindCut,
+		dst: u.dstCWD(mv.n), title: "✂ drop"}
 	return u, carryCmd(u.a, u.st, ins, drop, u.live)
 }
 

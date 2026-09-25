@@ -260,7 +260,7 @@ type uiModel struct {
 	// any of them cancels it.
 	folding *foldMove
 
-	// moving is move's picked-up turns (§2.8), nil when none are in hand.
+	// moving is move's picked-up section (§2.8), nil when none is in hand.
 	moving *carry
 
 	labelling *tree.Node // non-nil while typing a label
@@ -639,15 +639,8 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				which, idx := u.menu, u.menuIdx
 				u.menu, u.menuIdx = "", 0
-				if which == "range" && rangeKinds[idx] == kindMove {
-					from, to, ok := u.m.RangeSpan()
-					if !ok || from.SessionID != to.SessionID {
-						return u.editConfirm(kindMove) // says why, as for the others
-					}
-					return u.pickUp(from, to)
-				}
 				if which == "range" {
-					return u.editConfirm(rangeKinds[idx])
+					return u.editConfirm([]string{store.KindCompacted, kindFold, store.KindCut}[idx])
 				}
 				return u.placeChosen(idx)
 			case "esc", "q":
@@ -696,9 +689,9 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if u.moving != nil {
-			// Moving (§2.8): ⏎ puts the turns after the cursor's turn,
-			// esc puts them back, and the cursor steps over the turns in
-			// hand, which are drawn as one placeholder.
+			// Moving (§2.8): ⏎ puts the section after the cursor's turn,
+			// esc puts it back, and the cursor steps over the section in
+			// hand, which is drawn as one placeholder.
 			switch msg.String() {
 			case "enter":
 				n := u.m.Selected()
@@ -722,7 +715,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						break
 					}
 					if u.m.Cursor == prev {
-						u.m.Cursor = was // only turns in hand that way
+						u.m.Cursor = was // only the section in hand that way
 						break
 					}
 				}
@@ -787,7 +780,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if n == nil || n.Broken || n.Node.ID == "" {
 				return u, nil
 			}
-			return u.pickUp(n, n)
+			return u.pickUp(n)
 		case "b":
 			// Swallowed mid-range: s/⏎ already own the keys while a range is
 			// being fixed (§2.5c).
@@ -912,16 +905,8 @@ func (u uiModel) View() string {
 	if height < 5 {
 		height = 5
 	}
-	var block []string // the turns in hand, drawn after the cursor's turn
 	if u.moving != nil {
-		for i, h := range u.moving.heads {
-			if i == 3 {
-				block = append(block, fmt.Sprintf("⇢ … %d more", len(u.moving.heads)-3))
-				break
-			}
-			block = append(block, "⇢ "+h.Node.Title)
-		}
-		height -= len(block)
+		height-- // the section in hand, drawn after the cursor's turn
 	}
 	rows, start, total := u.m.Window(height)
 	// A bar takes 2 columns of its own, on top of the marker's 2, so the row
@@ -961,10 +946,10 @@ func (u uiModel) View() string {
 			b.WriteString("  " + bar + h + "\n")
 		}
 		if u.moving != nil && u.moving.rows[r.Node] {
-			// The origin of the turns in hand: one placeholder, however many
-			// of their rows are showing.
+			// The origin of the section in hand: one placeholder, however
+			// many of its rows are showing.
 			if !placeheld {
-				b.WriteString(marker + bar + render(StyleTool, fmt.Sprintf("%s⋯ %d turns moving", strings.Repeat("  ", r.Depth), u.moving.turns)) + "\n")
+				b.WriteString(marker + bar + render(StyleTool, strings.Repeat("  ", r.Depth)+"⋯ 1 turns moving") + "\n")
 			}
 			placeheld = true
 		} else {
@@ -972,9 +957,7 @@ func (u uiModel) View() string {
 			b.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)) + "\n")
 		}
 		if i == blockAfter {
-			for _, l := range block {
-				b.WriteString("  " + rowBar(Row{}, hasCurrent) + render(StyleTool, strings.Repeat("  ", blockDepth)+l) + "\n")
-			}
+			b.WriteString("  " + rowBar(Row{}, hasCurrent) + render(StyleTool, strings.Repeat("  ", blockDepth)+"⇢ "+u.moving.head.Node.Title) + "\n")
 		}
 	}
 	if total > 0 {
@@ -987,7 +970,7 @@ func (u uiModel) View() string {
 		scope = "all sessions"
 	}
 	if u.moving != nil {
-		b.WriteString("↑↓ move to a turn  ⏎ put them after it  esc put them back\n")
+		b.WriteString("↑↓ move to a turn  ⏎ put it after this turn  esc put it back\n")
 	} else if u.folding != nil {
 		b.WriteString("↑↓ move to a turn  ⏎ squash into it here  esc cancel\n")
 	} else if u.m.RangeEnd != nil {

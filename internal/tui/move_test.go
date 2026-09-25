@@ -75,31 +75,41 @@ func moveWorld(t *testing.T) *world {
 	return w
 }
 
-func TestPickingUpWithMAndWithTheRangeMenu(t *testing.T) {
+// m picks up one section; the range menu offers no move (§2.8).
+func TestPickingUpWithM(t *testing.T) {
 	w := moveWorld(t)
 	before := w.snapshot()
 
-	u := drive(t, cursorTo(t, w.open(sidT), sidT, "t2-p"), key('m'))
-	if u.moving == nil || u.status != "moving 1 turns — ⏎ puts them here · esc puts them back" {
+	u := drive(t, cursorTo(t, w.open(sidT), sidT, "t2-c"), key('m'))
+	if u.moving == nil || u.moving.head.Node.ID != "t2-p" || u.status != "moving 1 turn — ⏎ puts it here · esc puts it back" {
 		t.Fatalf("m: moving %v, status %q", u.moving != nil, u.status)
 	}
-
-	u = selectRange(t, w.open(sidT), sidT, "t2-r", "t3-c", 2)
-	if u.moving == nil || u.status != "moving 2 turns — ⏎ puts them here · esc puts them back" || u.m.RangeEnd != nil {
-		t.Fatalf("range menu move: moving %v, status %q", u.moving != nil, u.status)
+	for _, id := range []string{"t2-p", "t2-c", "t2-r"} {
+		if !u.moving.rows[u.m.Rows()[rowOf(u, sidT, id)].Node] {
+			t.Errorf("%s is not in hand", id)
+		}
 	}
-	if w.snapshot() != before || w.summaries() != 0 {
-		t.Fatal("picking up wrote or paid for something")
+	if u.moving.rows[u.m.Rows()[rowOf(u, sidT, "t3-p")].Node] {
+		t.Error("the next turn is in hand too")
 	}
-	u.m.Cursor = 0 // m here would pick up t1
+	if w.snapshot() != before || w.summaries() != 0 || len(w.h.calls) != 0 {
+		t.Fatal("picking up wrote, paid for or asked something")
+	}
+	u = cursorTo(t, u, sidT, "t1-p") // m here would pick up t1
 	for _, k := range "spbm" {
 		u = drive(t, u, key(k))
-		if u.moving == nil || u.moving.turns != 2 || u.m.RangeEnd != nil || u.picking != nil || u.busy != "" {
+		if u.moving == nil || u.moving.head.Node.ID != "t2-p" || u.m.RangeEnd != nil || u.picking != nil || u.busy != "" {
 			t.Fatalf("%c acted while moving: %q", k, u.status)
 		}
 	}
 	if w.snapshot() != before {
 		t.Fatal("a swallowed key wrote something")
+	}
+
+	u = drive(t, cursorTo(t, w.open(sidT), sidT, "t3-r"), key('s'))
+	u = drive(t, cursorTo(t, u, sidT, "t2-p"), enter)
+	if v := u.View(); u.menu != "range" || strings.Contains(v, "move —") {
+		t.Fatalf("the range menu offers a move:\n%s", v)
 	}
 }
 
@@ -284,7 +294,7 @@ func TestAMoveIsRefusedOnABusyOrChangedLine(t *testing.T) {
 	}
 }
 
-// Onto itself, onto the turn right before it, or the whole of its line
+// Onto itself, onto the turn right before it, or a line's only turn
 // elsewhere: refused, nothing written, still moving.
 func TestAMoveThatChangesNothingIsRefused(t *testing.T) {
 	for name, c := range map[string]struct {
@@ -292,16 +302,17 @@ func TestAMoveThatChangesNothingIsRefused(t *testing.T) {
 	}{
 		"onto itself":           {"t2-p", sidT, "t2-r", "move failed: that puts the turns back where they are"},
 		"after the turn before": {"t2-p", sidT, "t1-r", "move failed: that puts the turns back where they are"},
-		"a whole line":          {"", sidU, "u1-r", "move failed: a cut must leave at least one turn"},
+		"a whole line":          {"only-p", sidU, "u1-r", "move failed: a cut must leave at least one turn"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := moveWorld(t)
-			u := allOf(w.open(sidT))
-			if c.pick != "" {
-				u = drive(t, cursorTo(t, u, sidT, c.pick), key('m'))
-			} else {
-				u = selectRange(t, u, sidT, "t1-p", "t4-r", 2)
+			if c.pick == "only-p" {
+				w = newWorld(t)
+				w.durations = true
+				w.trunk(sidT, "only")
+				w.trunk(sidU, "u1", "u2")
 			}
+			u := drive(t, cursorTo(t, allOf(w.open(sidT)), sidT, c.pick), key('m'))
 			before := w.snapshot()
 			u = cursorTo(t, u, c.sid, c.at)
 			u = drive(t, u, enter)
