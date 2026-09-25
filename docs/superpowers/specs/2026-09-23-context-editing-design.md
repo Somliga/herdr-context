@@ -370,6 +370,14 @@ lines. The header carries the path bar when the session is on your path, and
 the viewport fits lines, not rows, so a header never pushes the cursor's row
 off screen.
 
+### 5.3f A summary row starts its own section
+
+A `⤶ squashed` or `⤶ merged from` row opens a turn (§3.1), so the tree draws
+it as a section head, like a prompt: at the section level after the turn it
+follows, never inside that turn's body. What the agent answers to it folds
+under it. After a merge or squash the cursor lands on that row without
+unfolding the turn before it.
+
 ### 5.4 Markers
 
 - **Drop**: the row after the drop shows `✂ <n> turns dropped` in the muted
