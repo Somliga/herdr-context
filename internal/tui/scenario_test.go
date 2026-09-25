@@ -329,7 +329,8 @@ func (w *world) branch(current, sid, id string) string {
 }
 
 // selectRange fixes a range from sid's entry from to its entry to and
-// chooses option opt of the range menu (0 squash, 1 squash into…, 2 drop).
+// chooses option opt of the range menu (0 squash, 1 squash into…, 2 move,
+// 3 drop).
 func selectRange(t *testing.T, u uiModel, sid, from, to string, opt int) uiModel {
 	t.Helper()
 	u = cursorTo(t, u, sid, to)
@@ -839,7 +840,7 @@ func TestScenarioAChainOfReplacements(t *testing.T) {
 	})
 
 	// 2. drop T's turn 3.
-	u = selectRange(t, u, t1, "t3-p", "t3-r", 2)
+	u = selectRange(t, u, t1, "t3-p", "t3-r", 3)
 	u = drive(t, u, enter)
 	t2 := w.replacement(t1)
 	if got := rowText(u, t2, "t4-p"); !strings.Contains(got, "✂ 1 turns dropped before this") {
@@ -869,7 +870,7 @@ func TestScenarioAChainOfReplacements(t *testing.T) {
 
 	// 4. drop T's turn 4, which D left: D becomes a root from a removed
 	// stretch, B stays.
-	u = selectRange(t, u, t3, "t4-p", "t4-r", 2)
+	u = selectRange(t, u, t3, "t4-p", "t4-r", 3)
 	u = drive(t, u, enter)
 	t4 := w.replacement(t3)
 	u = allOf(u)
@@ -904,7 +905,7 @@ func TestScenarioHandoverAfterSeveralEdits(t *testing.T) {
 			if !strings.HasSuffix(u.status, "⏎ on it to continue there") {
 				t.Fatalf("squash status %q", u.status)
 			}
-			u = selectRange(t, u, t1, "t4-p", "t4-r", 2)
+			u = selectRange(t, u, t1, "t4-p", "t4-r", 3)
 			u = drive(t, u, enter)
 			t2 := w.replacement(t1)
 			for _, c := range w.h.calls {
@@ -1039,7 +1040,7 @@ func TestScenarioTwoOverlaysEditTheSameLine(t *testing.T) {
 	w.trunk(sidT, "t1", "t2", "t3", "t4")
 	u1, u2 := w.open(sidT), w.open(sidT)
 
-	u1 = drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 2), enter)
+	u1 = drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 3), enter)
 	r1 := w.replacement(sidT)
 	u2 = drive(t, selectRange(t, u2, sidT, "t3-p", "t4-r", 0), enter)
 	if u2.status != staleLine || w.summaries() != 0 {
@@ -1091,7 +1092,7 @@ func TestAnEditIsRefusedIfItsLineIsReplacedDuringTheSummary(t *testing.T) {
 	w := newWorld(t)
 	w.trunk(sidT, "t1", "t2", "t3", "t4")
 	u1, u2 := w.open(sidT), w.open(sidT)
-	u1 = drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 2), enter)
+	u1 = drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 3), enter)
 	r1 := w.replacement(sidT)
 
 	// Hide the drop until the summary call, which puts it back.
@@ -1122,7 +1123,7 @@ func TestAMergeIntoAReplacedLineIsRefused(t *testing.T) {
 	w.trunk(sidT, "t1", "t2", "t3")
 	w.trunk(sidU, "u1", "u2", "u3")
 	u1, u2 := w.open(sidT), allOf(w.open(sidU))
-	drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 2), enter)
+	drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 3), enter)
 	r1 := w.replacement(sidT)
 
 	u2 = selectRange(t, u2, sidU, "u2-p", "u3-r", 1)
@@ -1164,7 +1165,7 @@ func TestAMoveFromAReplacedLineIsRefused(t *testing.T) {
 	w.trunk(sidT, "t1", "t2", "t3")
 	w.trunk(sidU, "u1", "u2")
 	u1, u2 := w.open(sidT), allOf(w.open(sidT))
-	drive(t, selectRange(t, u1, sidT, "t1-p", "t1-r", 2), enter)
+	drive(t, selectRange(t, u1, sidT, "t1-p", "t1-r", 3), enter)
 	r1 := w.replacement(sidT)
 
 	u2 = selectRange(t, u2, sidT, "t2-p", "t3-r", 1)
@@ -1348,7 +1349,7 @@ func TestAnInvisibleForkPointAfterADrop(t *testing.T) {
 			w.durations = true
 			w.trunk(sidT, "NUGGET", "TRIPPLEDIP", "BULLDOG", "HORSE")
 			b := oldEdge(t, w, "TRIPPLEDIP-p", "TRIPPLEDIP")
-			u := selectRange(t, allOf(w.open(sidT)), sidT, tc.drop+"-p", tc.drop+"-r", 2)
+			u := selectRange(t, allOf(w.open(sidT)), sidT, tc.drop+"-p", tc.drop+"-r", 3)
 			u = drive(t, u, enter)
 			r := w.replacement(sidT)
 			if r == sidT {
@@ -1381,7 +1382,7 @@ func TestADropInRealShapedTurnsMarksTheNextPrompt(t *testing.T) {
 	w := newWorld(t)
 	w.durations = true
 	w.trunk(sidT, "NUGGET", "TRIPPLEDIP", "BULLDOG")
-	u := selectRange(t, w.open(sidT), sidT, "TRIPPLEDIP-p", "TRIPPLEDIP-r", 2)
+	u := selectRange(t, w.open(sidT), sidT, "TRIPPLEDIP-p", "TRIPPLEDIP-r", 3)
 	u = drive(t, u, enter)
 	r := w.replacement(sidT)
 	if got := rowText(u, r, "BULLDOG-p"); !strings.Contains(got, "✂ 1 turns dropped before this") {

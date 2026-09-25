@@ -81,6 +81,7 @@ func TestARangeOpensAMenuNotACall(t *testing.T) {
 	for _, want := range []string{
 		"squash — replace these turns with a summary",
 		"squash into… — summarise, put it in another line, drop it here",
+		"move — carry these turns, as they are, to another place",
 		"drop — remove these turns",
 	} {
 		i := strings.Index(v, want)
@@ -97,7 +98,7 @@ func TestARangeOpensAMenuNotACall(t *testing.T) {
 
 func TestCutConfirmsOnceThenSplicesAndReplaces(t *testing.T) {
 	fa := &fakeAdapter{span: adapter.Span{First: 2, Last: 3}}
-	u, cmd := press(t, rangeUI(t, fa, &herdrLog{}), enter, down, down, enter)
+	u, cmd := press(t, rangeUI(t, fa, &herdrLog{}), enter, down, down, down, enter)
 	if cmd != nil {
 		t.Fatal("cut ran before its confirmation")
 	}
@@ -165,7 +166,7 @@ func TestAFailedSummaryWritesAndClosesNothing(t *testing.T) {
 
 func TestAWorkingAgentIsRefusedAtConfirm(t *testing.T) {
 	fa := &fakeAdapter{span: adapter.Span{First: 2, Last: 3}}
-	u, cmd := press(t, rangeUI(t, fa, &herdrLog{status: []string{"working"}}), enter, down, down, enter)
+	u, cmd := press(t, rangeUI(t, fa, &herdrLog{status: []string{"working"}}), enter, down, down, down, enter)
 	if cmd != nil || u.confirm != "" {
 		t.Fatal("a working agent's session reached the confirmation")
 	}
@@ -195,7 +196,7 @@ func TestAnAgentThatStartsWorkingDuringTheSummaryStopsTheSplice(t *testing.T) {
 
 func TestHerdrNotAnsweringRefusesTheEdit(t *testing.T) {
 	fa := &fakeAdapter{span: adapter.Span{First: 2, Last: 3}}
-	u, cmd := press(t, rangeUI(t, fa, &herdrLog{liveErr: errors.New("herdr agent list timed out")}), enter, down, down, enter)
+	u, cmd := press(t, rangeUI(t, fa, &herdrLog{liveErr: errors.New("herdr agent list timed out")}), enter, down, down, down, enter)
 	if cmd != nil || u.confirm != "" {
 		t.Fatal("an edit went ahead without knowing whether a pane holds the session")
 	}
@@ -607,7 +608,7 @@ func TestContinueOnALiveSessionOpensAndClosesNothing(t *testing.T) {
 
 func TestCutSaysHowManyTurnsWent(t *testing.T) {
 	fa := &fakeAdapter{span: adapter.Span{First: 2, Last: 3}}
-	u, _ := press(t, rangeUI(t, fa, &herdrLog{}), enter, down, down, enter)
+	u, _ := press(t, rangeUI(t, fa, &herdrLog{}), enter, down, down, down, enter)
 	_, cmd := press(t, u, enter)
 	if msg := cmd().(actionDoneMsg); msg.status != "dropped 2 turns from s → spliced- — ⏎ on it to continue there" {
 		t.Fatalf("status %q", msg.status)
@@ -630,7 +631,7 @@ func cutAndReload(t *testing.T, current string) uiModel {
 		sessionOf("s", "t1", "t2", "t3"), sessionOf("spliced-sid", "t1", "t3", "t4"), sessionOf("other", "o1")}}
 	u := rangeUI(t, fa, &herdrLog{})
 	u.current = current
-	u, _ = press(t, u, enter, down, down, enter)
+	u, _ = press(t, u, enter, down, down, down, enter)
 	u, cmd := press(t, u, enter)
 	next, _ := u.Update(cmd())
 	return next.(uiModel)
@@ -640,7 +641,7 @@ func cutAndReload(t *testing.T, current string) uiModel {
 // and that the tree on screen is the old one.
 func TestAFailedReloadSaysTheTreeWasNotRefreshed(t *testing.T) {
 	fa := &fakeAdapter{span: adapter.Span{First: 2, Last: 3}, discoverErr: errors.New("disk on fire")}
-	u, _ := press(t, rangeUI(t, fa, &herdrLog{}), enter, down, down, enter)
+	u, _ := press(t, rangeUI(t, fa, &herdrLog{}), enter, down, down, down, enter)
 	u, cmd := press(t, u, enter)
 	next, _ := u.Update(cmd())
 	want := "dropped 2 turns from s → spliced- — ⏎ on it to continue there (tree not refreshed: disk on fire)"
@@ -787,7 +788,7 @@ func TestEnterOnAReplacementWhenHerdrWillNotSayIsRefused(t *testing.T) {
 
 func TestABlockedAgentRefusesAnEdit(t *testing.T) {
 	fa := &fakeAdapter{span: adapter.Span{First: 2, Last: 3}}
-	u, cmd := press(t, rangeUI(t, fa, &herdrLog{status: []string{"blocked"}}), enter, down, down, enter)
+	u, cmd := press(t, rangeUI(t, fa, &herdrLog{status: []string{"blocked"}}), enter, down, down, down, enter)
 	if cmd != nil || u.confirm != "" || u.status != "agent is blocked — wait for it to finish" {
 		t.Fatalf("status %q confirm %q", u.status, u.confirm)
 	}

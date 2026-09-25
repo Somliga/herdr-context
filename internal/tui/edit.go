@@ -35,6 +35,7 @@ type editOp struct {
 	from, to  *tree.Node // compact: the range to summarise
 	title     string     // row title for the new record
 	dst       string
+	movedTo   string // a cut that is a move's drop: where the turns went
 }
 
 // summariseRange makes the billed summary call over op's range and stores
@@ -179,6 +180,8 @@ func verb(kind string) string {
 		return "drop"
 	case store.KindInserted:
 		return "merged"
+	case store.KindMoved:
+		return "move"
 	}
 	return kind
 }
@@ -229,15 +232,26 @@ func editCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) tea.C
 		}
 		b := store.Branch{Kind: op.kind, Title: op.title, CreatedAt: time.Now().UTC()}
 		if op.kind == store.KindCut {
-			b.Cut = &store.Cut{Turns: res.Removed, At: res.After}
+			b.Cut = &store.Cut{Turns: res.Removed, At: res.After, To: op.movedTo}
+		}
+		if op.kind == store.KindMoved {
+			b.MovedFrom = &store.Moved{SessionID: op.edit.Carry.ID, At: res.First}
+			if op.edit.Carry.ID == op.src.ID {
+				b.Cut = &store.Cut{Turns: res.Removed, At: res.After, To: res.SessionID}
+			}
 		}
 		st.Replace(op.src.ID, res.SessionID, b)
 		if err := st.Save(); err != nil {
 			return actionDoneMsg{status: verb(op.kind) + " into " + shortID(res.SessionID) + ", but the tree was not saved: " + err.Error()}
 		}
 		what := verb(op.kind)
-		if op.kind == store.KindCut {
+		switch {
+		case op.kind == store.KindCut:
 			what = fmt.Sprintf("dropped %d turns from", res.Removed)
+		case op.kind == store.KindMoved && op.edit.Carry.ID == op.src.ID:
+			what = fmt.Sprintf("moved %d turns within", res.Removed)
+		case op.kind == store.KindMoved:
+			what = fmt.Sprintf("moved %d turns into", res.Removed)
 		}
 		return actionDoneMsg{status: what + " " + shortID(op.src.ID) + " → " + shortID(res.SessionID) + continueThere,
 			reload: true, tip: res.SessionID}
@@ -405,8 +419,16 @@ func (u *uiModel) liveCheck(sessionID string) bool {
 var rangeMenu = []string{
 	"squash — replace these turns with a summary",
 	"squash into… — summarise, put it in another line, drop it here",
+	"move — carry these turns, as they are, to another place",
 	"drop — remove these turns",
 }
+
+// kindMove names move in the range menu. Like kindFold it is not a store
+// kind: a move writes a KindMoved line, and for another line a KindCut here.
+const kindMove = "move"
+
+// rangeKinds is what each rangeMenu entry does, by position.
+var rangeKinds = []string{store.KindCompacted, kindFold, kindMove, store.KindCut}
 var placeMenu = []string{"merge here", "branch here"}
 
 func menuView(heading string, options []string, idx int) string {
@@ -525,4 +547,123 @@ func (u uiModel) foldAt(at *tree.Node, sum store.Summary) (tea.Model, tea.Cmd) {
 	u.placing, u.pickAt = sum, at
 	u.menu, u.menuIdx = "place", 0
 	return u, nil
+}
+
+// carry is move's hand (§2.8): the turns picked up, until ⏎ puts them down
+// or esc puts them back. rows are every node of those turns, for the
+// preview; nothing is written until ⏎.
+type carry struct {
+	src      adapter.Session
+	from, to *tree.Node
+	turns    int
+	rows     map[*tree.Node]bool
+	heads    []*tree.Node // the rows that open each turn, in order
+}
+
+// turnRows is every node of the whole turns from..to spans, in order: from's
+// turn from its head, up to the head that follows to's. Folds do not matter.
+func (u uiModel) turnRows(from, to *tree.Node) []*tree.Node {
+	all := *u.m
+	all.Folded, all.Filter, all.RangeEnd = map[*tree.Node]bool{}, FilterDefault, nil
+	head := from
+	if !from.IsHead && u.m.parent[from] != nil {
+		head = u.m.parent[from]
+	}
+	var out []*tree.Node
+	started, pastTo := false, false
+	for _, r := range all.Rows() {
+		n := r.Node
+		if n.SessionID != from.SessionID {
+			continue
+		}
+		started = started || n == head
+		if !started {
+			continue
+		}
+		if pastTo && n.IsHead {
+			break
+		}
+		out = append(out, n)
+		pastTo = pastTo || n == to
+	}
+	return out
+}
+
+// pickUp is m on a turn, or move on a range (§2.8): the widened turns are
+// in hand and nothing is written.
+func (u uiModel) pickUp(from, to *tree.Node) (tea.Model, tea.Cmd) {
+	src := adapter.Session{ID: to.SessionID, CWD: to.SessionCWD, Path: to.SessionPath}
+	sp, err := u.a.Widen(src, from.Node.ID, to.Node.ID)
+	if err != nil {
+		u.status = "cannot move this: " + err.Error()
+		return u, nil
+	}
+	if sp.First == 0 {
+		u.status = "only whole turns move — this is before the first prompt"
+		return u, nil
+	}
+	mv := &carry{src: src, from: from, to: to, turns: sp.Last - sp.First + 1, rows: map[*tree.Node]bool{}}
+	for _, n := range u.turnRows(from, to) {
+		mv.rows[n] = true
+		if n.IsHead {
+			mv.heads = append(mv.heads, n)
+		}
+	}
+	u.m.CancelRange()
+	u.moving = mv
+	u.status = fmt.Sprintf("moving %d turns — ⏎ puts them here · esc puts them back", mv.turns)
+	return u, nil
+}
+
+// putDown is ⏎ while moving: the turns go after at's whole turn. Within the
+// line it is one splice. Into another line it is carryCmd. A refusal — at is
+// inside the turns, or right before them, or the move would empty its line —
+// comes back from the splice with nothing written, and the turns stay in
+// hand: only a reload lets go of them.
+func (u uiModel) putDown(at *tree.Node) (tea.Model, tea.Cmd) {
+	mv := u.moving
+	dst := adapter.Session{ID: at.SessionID, CWD: at.SessionCWD, Path: at.SessionPath}
+	src := mv.src
+	ins := editOp{src: dst, edit: adapter.Edit{From: mv.from.Node.ID, To: mv.to.Node.ID, After: at.Node.ID, Carry: &src},
+		kind: store.KindMoved, dst: u.dstCWD(at), title: "⇢ move"}
+	u.busy = "moving…"
+	if dst.ID == src.ID {
+		return u, editCmd(u.a, u.st, ins, u.live)
+	}
+	drop := editOp{src: src, edit: adapter.Edit{From: mv.from.Node.ID, To: mv.to.Node.ID}, kind: store.KindCut,
+		dst: u.dstCWD(mv.to), title: "✂ drop"}
+	return u, carryCmd(u.a, u.st, ins, drop, u.live)
+}
+
+// carryCmd is a move into another line (§2.8): the source is asked first,
+// then ins writes the turns into the target (asking it), and only if that
+// landed does drop take them out of the source, asking it again. Target
+// first: if the drop fails, the turns are in two places, never in none.
+func carryCmd(a adapter.Adapter, st *store.Store, ins, drop editOp, live LiveFunc) tea.Cmd {
+	return func() tea.Msg {
+		if stale := changedElsewhere(st, drop.src.ID); stale != "" {
+			return actionDoneMsg{status: stale}
+		}
+		if live != nil {
+			_, status, err := live(drop.src.ID)
+			if err != nil {
+				return actionDoneMsg{status: "cannot tell whether the source is busy: " + err.Error() + " — nothing was written"}
+			}
+			if busy(status) {
+				return actionDoneMsg{status: "the source's agent is " + status + " — wait for it to finish; nothing was written"}
+			}
+		}
+		msg := editCmd(a, st, ins, live)().(actionDoneMsg)
+		if !msg.reload {
+			return msg
+		}
+		drop.movedTo = msg.tip
+		cut := editCmd(a, st, drop, live)().(actionDoneMsg)
+		into := "moved into " + shortID(ins.src.ID)
+		if !cut.reload {
+			return actionDoneMsg{status: into + ", but the source was not dropped: " + cut.status, reload: true, tip: msg.tip}
+		}
+		return actionDoneMsg{status: into + " → " + shortID(msg.tip) + ", " + strings.TrimSuffix(cut.status, continueThere),
+			reload: true, tip: msg.tip}
+	}
 }

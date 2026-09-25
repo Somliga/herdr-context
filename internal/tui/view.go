@@ -87,7 +87,6 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 		b.WriteString("▸ ")
 	}
 
-
 	if r.Node.Label != "" {
 		b.WriteString("★ " + r.Node.Label + "  ")
 	}
@@ -183,13 +182,19 @@ func rowBar(r Row, hasCurrent bool) string {
 // cutNote is the cut marker, drawn apart from its row so View can mute it
 // whatever the row's own style (spec §5.4). "" when the row has none.
 func cutNote(n *tree.Node) string {
-	if n.CutHere > 0 {
-		return fmt.Sprintf("   ✂ %d turns dropped before this", n.CutHere)
+	out := ""
+	switch {
+	case n.MovedTo != "" && n.CutHere+n.CutAfter > 0:
+		out = fmt.Sprintf("   ⇢ %d turns moved to %s", n.CutHere+n.CutAfter, shortID(n.MovedTo))
+	case n.CutHere > 0:
+		out = fmt.Sprintf("   ✂ %d turns dropped before this", n.CutHere)
+	case n.CutAfter > 0:
+		out = fmt.Sprintf("   ✂ %d turns dropped after this", n.CutAfter)
 	}
-	if n.CutAfter > 0 {
-		return fmt.Sprintf("   ✂ %d turns dropped after this", n.CutAfter)
+	if n.MovedFrom != "" {
+		out += "   ⇠ moved from " + shortID(n.MovedFrom)
 	}
-	return ""
+	return out
 }
 
 // confirmText is the branch confirmation, which is where the user is told
@@ -222,7 +227,7 @@ type uiModel struct {
 	// abandoning is set by the first ctrl+c during a call, so the second one
 	// is a deliberate choice rather than a reflex.
 	abandoning bool
-	quitting bool
+	quitting   bool
 
 	// send delivers text to a live agent, and liveAgent names the agent
 	// running u.current. Both are injected by Run so this package keeps its
@@ -254,6 +259,9 @@ type uiModel struct {
 	// (§2.7); it stays through the place menu and confirmation, and esc on
 	// any of them cancels it.
 	folding *foldMove
+
+	// moving is move's picked-up turns (§2.8), nil when none are in hand.
+	moving *carry
 
 	labelling *tree.Node // non-nil while typing a label
 	labelText string
@@ -538,6 +546,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return u, tea.Quit
 		}
 		if msg.reload {
+			u.moving = nil // put down: the rows it held are about to go
 			if sessions, err := u.a.Discover(u.repoRoot); err == nil {
 				u.roots = tree.Build(sessions, u.st)
 				u.m.RangeEnd = nil
@@ -630,8 +639,15 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				which, idx := u.menu, u.menuIdx
 				u.menu, u.menuIdx = "", 0
+				if which == "range" && rangeKinds[idx] == kindMove {
+					from, to, ok := u.m.RangeSpan()
+					if !ok || from.SessionID != to.SessionID {
+						return u.editConfirm(kindMove) // says why, as for the others
+					}
+					return u.pickUp(from, to)
+				}
 				if which == "range" {
-					return u.editConfirm([]string{store.KindCompacted, kindFold, store.KindCut}[idx])
+					return u.editConfirm(rangeKinds[idx])
 				}
 				return u.placeChosen(idx)
 			case "esc", "q":
@@ -665,7 +681,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if u.folding != nil {
 			// Target mode: the tree moves as usual, ⏎ picks the target, and
-			// s and p stay quiet so there is only one thing in hand.
+			// s, p, b and m stay quiet so there is only one thing in hand.
 			switch msg.String() {
 			case "enter":
 				n := u.m.Selected()
@@ -675,7 +691,43 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return u.placeInFoldMode(n)
 			case "esc":
 				return u.cancelMove(), nil
-			case "s", "p", "b":
+			case "s", "p", "b", "m":
+				return u, nil
+			}
+		}
+		if u.moving != nil {
+			// Moving (§2.8): ⏎ puts the turns after the cursor's turn,
+			// esc puts them back, and the cursor steps over the turns in
+			// hand, which are drawn as one placeholder.
+			switch msg.String() {
+			case "enter":
+				n := u.m.Selected()
+				if n == nil || n.Broken || n.Node.ID == "" {
+					return u, nil
+				}
+				return u.putDown(n)
+			case "esc":
+				u.moving, u.status = nil, "move cancelled — nothing was written"
+				return u, nil
+			case "up", "k", "down", "j":
+				step := u.m.Down
+				if s := msg.String(); s == "up" || s == "k" {
+					step = u.m.Up
+				}
+				was := u.m.Cursor
+				for {
+					prev := u.m.Cursor
+					step()
+					if !u.moving.rows[u.m.Selected()] {
+						break
+					}
+					if u.m.Cursor == prev {
+						u.m.Cursor = was // only turns in hand that way
+						break
+					}
+				}
+				return u, nil
+			case "s", "p", "b", "m":
 				return u, nil
 			}
 		}
@@ -727,6 +779,15 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return u, nil
 			}
 			u.picking, u.pickIdx, u.pickAt = sums, 0, n
+		case "m":
+			if u.m.RangeEnd != nil {
+				return u, nil
+			}
+			n := u.m.Selected()
+			if n == nil || n.Broken || n.Node.ID == "" {
+				return u, nil
+			}
+			return u.pickUp(n, n)
 		case "b":
 			// Swallowed mid-range: s/⏎ already own the keys while a range is
 			// being fixed (§2.5c).
@@ -851,6 +912,17 @@ func (u uiModel) View() string {
 	if height < 5 {
 		height = 5
 	}
+	var block []string // the turns in hand, drawn after the cursor's turn
+	if u.moving != nil {
+		for i, h := range u.moving.heads {
+			if i == 3 {
+				block = append(block, fmt.Sprintf("⇢ … %d more", len(u.moving.heads)-3))
+				break
+			}
+			block = append(block, "⇢ "+h.Node.Title)
+		}
+		height -= len(block)
+	}
 	rows, start, total := u.m.Window(height)
 	// A bar takes 2 columns of its own, on top of the marker's 2, so the row
 	// text is narrowed to keep the whole line within u.width.
@@ -859,6 +931,23 @@ func (u uiModel) View() string {
 	if hasCurrent {
 		barWidth = 2
 	}
+	// blockAfter is the last row of the cursor's turn: its head's body
+	// follows it until the next head or another session's row.
+	blockAfter, blockDepth := -1, 0
+	if u.moving != nil {
+		for i := u.m.Cursor - start; i >= 0 && i < len(rows); i++ {
+			if i > u.m.Cursor-start && (rows[i].Node.IsHead || rows[i].Node.SessionID != rows[i-1].Node.SessionID) {
+				break
+			}
+			blockAfter = i
+		}
+		if blockAfter >= 0 {
+			if blockDepth = rows[u.m.Cursor-start].Depth; !rows[u.m.Cursor-start].Node.IsHead && blockDepth > 0 {
+				blockDepth--
+			}
+		}
+	}
+	placeheld := false
 	for i, r := range rows {
 		marker := "  "
 		if start+i == u.m.Cursor {
@@ -871,8 +960,22 @@ func (u uiModel) View() string {
 		if h := headerLine(r, u.width-2-barWidth); h != "" {
 			b.WriteString("  " + bar + h + "\n")
 		}
-		text, key := renderRow(r, start+i == u.m.Cursor, u.current, u.width-2-barWidth)
-		b.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)) + "\n")
+		if u.moving != nil && u.moving.rows[r.Node] {
+			// The origin of the turns in hand: one placeholder, however many
+			// of their rows are showing.
+			if !placeheld {
+				b.WriteString(marker + bar + render(StyleTool, fmt.Sprintf("%s⋯ %d turns moving", strings.Repeat("  ", r.Depth), u.moving.turns)) + "\n")
+			}
+			placeheld = true
+		} else {
+			text, key := renderRow(r, start+i == u.m.Cursor, u.current, u.width-2-barWidth)
+			b.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)) + "\n")
+		}
+		if i == blockAfter {
+			for _, l := range block {
+				b.WriteString("  " + rowBar(Row{}, hasCurrent) + render(StyleTool, strings.Repeat("  ", blockDepth)+l) + "\n")
+			}
+		}
 	}
 	if total > 0 {
 		b.WriteString(fmt.Sprintf("\n(%d/%d)\n", u.m.Cursor+1, total))
@@ -883,14 +986,16 @@ func (u uiModel) View() string {
 	if u.scopeAll {
 		scope = "all sessions"
 	}
-	if u.folding != nil {
+	if u.moving != nil {
+		b.WriteString("↑↓ move to a turn  ⏎ put them after it  esc put them back\n")
+	} else if u.folding != nil {
 		b.WriteString("↑↓ move to a turn  ⏎ squash into it here  esc cancel\n")
 	} else if u.m.RangeEnd != nil {
 		// While a range is being selected, three keys change meaning. Saying
 		// so is cheaper than the user discovering that esc no longer closes.
 		b.WriteString("↑↓ move to the range's start  s/⏎ choose what to do  esc cancel range\n")
 	} else {
-		b.WriteString(fmt.Sprintf("↑↓ move  ←→ fold  ⏎ continue here  b branch  s select  p place a summary  L label  a scope:%s  f filter:%s  esc close\n", scope, u.m.Filter))
+		b.WriteString(fmt.Sprintf("↑↓ move  ←→ fold  ⏎ continue here  b branch  s select  m move  p place a summary  L label  a scope:%s  f filter:%s  esc close\n", scope, u.m.Filter))
 	}
 	if u.busy != "" {
 		b.WriteString(u.busy + "\n")
