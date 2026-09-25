@@ -83,10 +83,10 @@ type Adapter interface {
 // used instead of a range, names an entry after whose turn Seed is inserted
 // and nothing is removed. A range with no Seed is a cut.
 //
-// Carry, set with From..To and After, makes the edit a move: Carry's
-// widened range is written verbatim after After's turn. Carry naming the
-// edited session itself moves the turns within its line; any other session
-// is only read, and dropping the range from it is a separate cut.
+// Carry, set with From and After, makes the edit a move: the one turn of
+// Carry's From is written verbatim after After's turn (To is unused). Carry
+// naming the edited session itself moves the turn within its line; any other
+// session is only read, and dropping the turn from it is a separate cut.
 type Edit struct {
 	From, To string
 	After    string

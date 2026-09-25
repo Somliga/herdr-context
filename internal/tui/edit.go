@@ -593,7 +593,7 @@ func (u uiModel) putDown(at *tree.Node) (tea.Model, tea.Cmd) {
 	mv := u.moving
 	dst := adapter.Session{ID: at.SessionID, CWD: at.SessionCWD, Path: at.SessionPath}
 	src := mv.src
-	ins := editOp{src: dst, edit: adapter.Edit{From: mv.n.Node.ID, To: mv.n.Node.ID, After: at.Node.ID, Carry: &src},
+	ins := editOp{src: dst, edit: adapter.Edit{From: mv.n.Node.ID, After: at.Node.ID, Carry: &src},
 		kind: store.KindMoved, dst: u.dstCWD(at), title: "⇢ move"}
 	u.busy = "moving…"
 	if dst.ID == src.ID {

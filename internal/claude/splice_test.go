@@ -327,7 +327,7 @@ var turn2 = []string{"u2", "a2", "a2b", "tr1", "tr2", "at2", "a2c"}
 func TestAMoveLaterWithinTheLine(t *testing.T) {
 	src := "testdata/splice.jsonl"
 	self := &adapter.Session{ID: "S", Path: src}
-	res, by, order := spliced(t, src, adapter.Edit{From: "a2b", To: "a2b", After: "a4", Carry: self})
+	res, by, order := spliced(t, src, adapter.Edit{From: "a2b", After: "a4", Carry: self})
 	m := moved(t, src, by)
 	checkMoved(t, by, m, turn2...)
 	if parent(by["u3"]) != "a1" {
@@ -366,7 +366,7 @@ func TestAMoveLaterWithinTheLine(t *testing.T) {
 func TestAMoveEarlierWithinTheLine(t *testing.T) {
 	src := "testdata/splice.jsonl"
 	self := &adapter.Session{ID: "S", Path: src}
-	res, by, _ := spliced(t, src, adapter.Edit{From: "u4", To: "a4", After: "u1", Carry: self})
+	res, by, _ := spliced(t, src, adapter.Edit{From: "a4", After: "u1", Carry: self})
 	m := moved(t, src, by)
 	checkMoved(t, by, m, "u4", "a4")
 	if parent(m["u4"]) != "a1" || parent(m["a4"]) != m["u4"].UUID() {
@@ -407,7 +407,7 @@ func TestAMoveIntoALineThatHoldsCopiesOfTheTurns(t *testing.T) {
 	}
 	srcBefore, _ := os.ReadFile("testdata/splice.jsonl")
 
-	res, by, order := spliced(t, dst, adapter.Edit{From: "u2", To: "a2c", After: "ba1",
+	res, by, order := spliced(t, dst, adapter.Edit{From: "tr2", After: "ba1",
 		Carry: &adapter.Session{ID: "S", Path: "testdata/splice.jsonl"}})
 	if after, _ := os.ReadFile("testdata/splice.jsonl"); string(after) != string(srcBefore) {
 		t.Fatal("a move modified the line it carried from")
@@ -445,19 +445,24 @@ func TestMoveRefuses(t *testing.T) {
 	t.Setenv("CLAUDE_PROJECTS_DIR", t.TempDir())
 	src := "testdata/splice.jsonl"
 	self := &adapter.Session{ID: "S", Path: src}
+	// one is a line of one turn: the preamble, u1 and a1.
+	one := filepath.Join(t.TempDir(), "one.jsonl")
+	b, _ := os.ReadFile(src)
+	if err := os.WriteFile(one, []byte(strings.Join(strings.SplitAfter(string(b), "\n")[:3], "")), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for name, c := range map[string]struct {
 		dst  string
 		e    adapter.Edit
 		want error
 	}{
-		"into itself":            {src, adapter.Edit{From: "u2", To: "u3", After: "a2b", Carry: self}, ErrMoveNowhere},
-		"after the turn before":  {src, adapter.Edit{From: "u2", To: "u3", After: "a1", Carry: self}, ErrMoveNowhere},
-		"every turn of its line": {src, adapter.Edit{From: "u1", To: "a4", After: "u1", Carry: self}, ErrMoveNowhere},
-		"every turn elsewhere":   {"testdata/parallel.jsonl", adapter.Edit{From: "u1", To: "a4", After: "u1", Carry: self}, ErrNothingLeft},
-		"the preamble":           {src, adapter.Edit{From: "pre1", To: "a1", After: "a4", Carry: self}, ErrMovePreamble},
-		"a target off the line":  {src, adapter.Edit{From: "u2", To: "a2", After: "x1", Carry: self}, ErrNotOnLine},
-		"a range off the line":   {src, adapter.Edit{From: "x1", To: "xa1", After: "a4", Carry: self}, ErrNotOnLine},
-		"a seed":                 {src, adapter.Edit{From: "u2", To: "a2", After: "a4", Carry: self, Seed: seedText}, ErrMoveSeed},
+		"into itself":           {src, adapter.Edit{From: "u2", After: "a2b", Carry: self}, ErrMoveNowhere},
+		"after the turn before": {src, adapter.Edit{From: "u2", After: "a1", Carry: self}, ErrMoveNowhere},
+		"a line's only turn":    {src, adapter.Edit{From: "a1", After: "u2", Carry: &adapter.Session{ID: "O", Path: one}}, ErrNothingLeft},
+		"the preamble":          {src, adapter.Edit{From: "pre1", After: "a4", Carry: self}, ErrMovePreamble},
+		"a target off the line": {src, adapter.Edit{From: "u2", After: "x1", Carry: self}, ErrNotOnLine},
+		"a turn off the line":   {src, adapter.Edit{From: "x1", After: "a4", Carry: self}, ErrNotOnLine},
+		"a seed":                {src, adapter.Edit{From: "u2", After: "a4", Carry: self, Seed: seedText}, ErrMoveSeed},
 	} {
 		if _, err := Splice(c.dst, c.e, t.TempDir()); !errors.Is(err, c.want) {
 			t.Fatalf("%s: err = %v, want %v", name, err, c.want)

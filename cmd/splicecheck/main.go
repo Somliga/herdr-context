@@ -98,8 +98,8 @@ func main() {
 				what string
 				e    adapter.Edit
 			}{
-				{"the first turn later", adapter.Edit{From: prompts[0], To: prompts[0], After: prompts[n-1], Carry: self}},
-				{"the last turn earlier", adapter.Edit{From: prompts[n-1], To: prompts[n-1], After: prompts[0], Carry: self}},
+				{"the first turn later", adapter.Edit{From: prompts[0], After: prompts[n-1], Carry: self}},
+				{"the last turn earlier", adapter.Edit{From: prompts[n-1], After: prompts[0], Carry: self}},
 			} {
 				tried++
 				r, refusReason := check(p, m.e, sourceOrphans)

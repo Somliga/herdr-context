@@ -161,10 +161,11 @@ func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, err
 	return adapter.Spliced{SessionID: sid, Removed: removed, After: after}, nil
 }
 
-// move is Splice for an Edit with Carry (§2.8): Carry's widened From..To is
-// written verbatim after the turn of dstPath's e.After. When Carry is
-// dstPath's own session the range leaves its old place in the same pass;
-// otherwise Carry's file is only read.
+// move is Splice for an Edit with Carry (§2.8): the one turn of Carry's
+// e.From is written verbatim after the turn of dstPath's e.After. When Carry
+// is dstPath's own session the turn leaves its old place in the same pass;
+// otherwise Carry's file is only read. A stretch is squashed first and moved
+// as its one ⤶ turn.
 //
 // The moved entries get fresh uuids: the target may already hold copies of
 // them (a branch shares history), and one uuid twice corrupts a file. Every
@@ -187,24 +188,20 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 			return adapter.Spliced{}, err
 		}
 	}
-	a, b, err := from.span(e.From, e.To)
-	if err != nil {
-		return adapter.Spliced{}, err
-	}
-	at, ok := l.turn[e.After]
+	mt, okFrom := from.turn[e.From] // the moved turn
+	at, okAt := l.turn[e.After]
 	switch {
-	case !ok:
+	case !okFrom || !okAt:
 		return adapter.Spliced{}, ErrNotOnLine
-	case a == 0:
+	case mt == 0:
 		return adapter.Spliced{}, ErrMovePreamble
-	case same && at >= a-1 && at <= b:
+	case same && (at == mt || at == mt-1):
 		return adapter.Spliced{}, ErrMoveNowhere
-	case !same && a <= 1 && b >= from.last:
+	case !same && from.last == 1:
 		return adapter.Spliced{}, ErrNothingLeft
 	}
 	carried := func(ln *line, u string) bool {
-		t := ln.turn[u]
-		return ln == from && t >= a && t <= b
+		return ln == from && ln.turn[u] == mt
 	}
 	orNull := func(u string) any {
 		if u == "" {
@@ -237,7 +234,7 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 				m[k] = fresh[s]
 			}
 		}
-		if u == from.firstOf(a) {
+		if u == from.firstOf(mt) {
 			m["parentUuid"] = orNull(l.lastOf(at))
 		}
 		enc, err := Marshal(Entry{Raw: m})
@@ -246,7 +243,7 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 		}
 		block = append(append(block, enc...), '\n')
 	}
-	first, last := fresh[from.firstOf(a)], fresh[from.lastOf(b)]
+	first, last := fresh[from.firstOf(mt)], fresh[from.lastOf(mt)]
 
 	// next is where the block goes: the first entry after the target turn.
 	// gap, within the line only, is the first entry after where it was.
@@ -258,7 +255,7 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 		if t := l.turn[u]; t > at && next == "" {
 			next = u
 		}
-		if t := l.turn[u]; same && t > b && gap == "" {
+		if t := l.turn[u]; same && t > mt && gap == "" {
 			gap = u
 		}
 	}
@@ -275,7 +272,7 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 			buf = append(buf, block...)
 			m["parentUuid"] = last
 		case gap:
-			m["parentUuid"] = orNull(l.lastOf(a - 1))
+			m["parentUuid"] = orNull(l.lastOf(mt - 1))
 		}
 		enc, err := Marshal(Entry{Raw: m})
 		if err != nil {
@@ -290,7 +287,7 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 		buf = append(buf, block...)
 		leaf = last
 	case same && gap == "":
-		leaf = l.lastOf(a - 1) // the line's last turns moved earlier
+		leaf = l.lastOf(mt - 1) // the line's last turn moved earlier
 	}
 	lp, err := Marshal(Entry{Raw: map[string]any{"type": "last-prompt", "leafUuid": leaf, "sessionId": sid}})
 	if err != nil {
@@ -300,7 +297,7 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 	if _, err := writeSession(dstCWD, sid, buf); err != nil {
 		return adapter.Spliced{}, err
 	}
-	out := adapter.Spliced{SessionID: sid, Removed: b - a + 1, First: first}
+	out := adapter.Spliced{SessionID: sid, Removed: 1, First: first}
 	if same {
 		out.After = gap
 	}
