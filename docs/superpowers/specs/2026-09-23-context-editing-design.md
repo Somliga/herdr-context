@@ -184,12 +184,13 @@ into it · esc cancels`.
 
 ### 2.8 move — carry turns verbatim
 
-**Picking up.** `m` on a turn picks up that turn (its prompt and everything
-under it). A range's menu gains **move** (`squash · squash into… · move ·
-drop`), which picks up the widened range. Status `moving <n> turns — ⏎ puts
-them here · esc puts them back`.
+**Picking up.** `m` on a turn picks up that one section (its prompt, or its
+`⤶` row, and everything under it). There is no range move: to move a stretch,
+squash it first (one `⤶` section), then move that. The range menu stays
+`squash · squash into… · drop`. Status `moving 1 turn — ⏎ puts it here · esc
+puts it back`.
 
-**Moving.** The picked-up turns are drawn as a dimmed `⇢ …` block directly
+**Moving.** The picked-up turn is drawn as a dimmed `⇢ …` block directly
 after the turn under the cursor, following it; their origin shows a dimmed
 `⋯ <n> turns moving`. Nothing is written; nothing is billed. `s`, `p`, `b`,
 `m` are swallowed.
