@@ -358,6 +358,18 @@ stays at the parent's depth and follows the branches under it. Indentation
 means "branched here"; the bar means "your path". This replaces v2's rule that
 the line you are on stays level while the left-behind tail is indented.
 
+### 5.3e Each session has a header line
+
+Every session's first shown row is drawn as two lines: a header line with the
+session id (`↳ <id>` for a branch, `<id>` for a root line), then the turn.
+A branch's header sits one level under the turn it came from (§5.3d) and its
+turns one level under the header; a root line's turns stay at its header's
+level. The header is part of its turn's row: the cursor never lands on it,
+`⏎`/`b`/`s`/`p`/`L` act on the turn, and the row counter counts rows, not
+lines. The header carries the path bar when the session is on your path, and
+the viewport fits lines, not rows, so a header never pushes the cursor's row
+off screen.
+
 ### 5.4 Markers
 
 - **Drop**: the row after the drop shows `✂ <n> turns dropped` in the muted
