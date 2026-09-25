@@ -167,12 +167,14 @@ func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, err
 // otherwise Carry's file is only read. A stretch is squashed first and moved
 // as its one ⤶ turn.
 //
-// The moved entries get fresh uuids: the target may already hold copies of
-// them (a branch shares history), and one uuid twice corrupts a file. Every
-// top-level field naming a moved entry is rewritten with it; the first moved
-// entry hangs on the target turn's last entry, and the entry after the
-// insertion on the last moved one. tool_use ids are kept: pairs never leave
-// their turn (§3.1).
+// Within the line every id is kept: nothing is duplicated in one file, and
+// branches and labels on the moved turn keep resolving. Into another line
+// every id the turn carries is renewed, consistently within it — uuids,
+// requestIds, message ids, tool_use ids and whatever names them — since the
+// target may hold copies under the same ids, and a repeated requestId or
+// message id would merge or mis-assign turns. The first moved entry hangs on
+// the target turn's last entry, and the entry after the insertion on the last
+// moved one.
 func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error) {
 	if e.Seed != "" {
 		return adapter.Spliced{}, ErrMoveSeed
@@ -214,11 +216,25 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 	if err != nil {
 		return adapter.Spliced{}, err
 	}
-	fresh := map[string]string{}
+	fresh := map[string]string{} // every id the moved turn carries, to its new one
 	for _, en := range from.es {
-		if u := en.UUID(); u != "" && from.keep[u] && carried(from, u) {
-			if fresh[u], err = newUUIDv4(); err != nil {
-				return adapter.Spliced{}, err
+		u := en.UUID()
+		if u == "" || !from.keep[u] || !carried(from, u) {
+			continue
+		}
+		for i, id := range append([]string{u}, carriedIDs(en)...) {
+			switch {
+			case id == "" || fresh[id] != "":
+			case same:
+				fresh[id] = id
+			case i == 0:
+				if fresh[id], err = newUUIDv4(); err != nil {
+					return adapter.Spliced{}, err
+				}
+			default:
+				if fresh[id], err = renewID(id); err != nil {
+					return adapter.Spliced{}, err
+				}
 			}
 		}
 	}
@@ -228,12 +244,7 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 		if u == "" || !from.keep[u] || !carried(from, u) {
 			continue
 		}
-		m := rehome(en, sid, dstCWD)
-		for k, v := range m {
-			if s, ok := v.(string); ok && fresh[s] != "" {
-				m[k] = fresh[s]
-			}
-		}
+		m := renamed(rehome(en, sid, dstCWD), fresh).(map[string]any)
 		if u == from.firstOf(mt) {
 			m["parentUuid"] = orNull(l.lastOf(at))
 		}
@@ -302,4 +313,60 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 		out.After = gap
 	}
 	return out, nil
+}
+
+// carriedIDs is every id other than its uuid that e carries and a copy must
+// not share: its requestId, its message id and its tool_use ids.
+func carriedIDs(e Entry) []string {
+	ids := []string{e.RequestID()}
+	msg, _ := e.Raw["message"].(map[string]any)
+	if id, _ := msg["id"].(string); id != "" {
+		ids = append(ids, id)
+	}
+	blocks, _ := msg["content"].([]any)
+	for _, b := range blocks {
+		if bm, _ := b.(map[string]any); bm["type"] == "tool_use" {
+			if id, _ := bm["id"].(string); id != "" {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
+}
+
+// renewID is a fresh id shaped like id: its prefix up to the last "_"
+// (toolu_, msg_, req_) kept, the rest random.
+func renewID(id string) (string, error) {
+	u, err := newUUIDv4()
+	if err != nil {
+		return "", err
+	}
+	return id[:strings.LastIndex(id, "_")+1] + strings.ReplaceAll(u, "-", ""), nil
+}
+
+// renamed is a deep copy of v with every string that is a key of to replaced
+// by its value: a moved turn's ids wherever they appear — parentUuid, a
+// tool_result's tool_use_id, toolUseResult, sourceToolAssistantUUID.
+// ponytail: exact-match on every string; a free-text value equal to an id
+// would be renamed too.
+func renamed(v any, to map[string]string) any {
+	switch x := v.(type) {
+	case string:
+		if n, ok := to[x]; ok {
+			return n
+		}
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, e := range x {
+			m[k] = renamed(e, to)
+		}
+		return m
+	case []any:
+		out := make([]any, len(x))
+		for i, e := range x {
+			out[i] = renamed(e, to)
+		}
+		return out
+	}
+	return v
 }

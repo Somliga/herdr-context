@@ -242,19 +242,19 @@ func editCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) tea.C
 		}
 		st.Replace(op.src.ID, res.SessionID, b)
 		if err := st.Save(); err != nil {
-			return actionDoneMsg{status: verb(op.kind) + " into " + shortID(res.SessionID) + ", but the tree was not saved: " + err.Error()}
+			return actionDoneMsg{status: verb(op.kind) + " into " + shortID(res.SessionID) + ", but the tree was not saved: " + err.Error(), wrote: true}
 		}
 		what := verb(op.kind)
 		switch {
 		case op.kind == store.KindCut:
 			what = fmt.Sprintf("dropped %d turns from", res.Removed)
 		case op.kind == store.KindMoved && op.edit.Carry.ID == op.src.ID:
-			what = fmt.Sprintf("moved %d turns within", res.Removed)
+			what = "moved 1 turn within"
 		case op.kind == store.KindMoved:
-			what = fmt.Sprintf("moved %d turns into", res.Removed)
+			what = "moved 1 turn into"
 		}
 		return actionDoneMsg{status: what + " " + shortID(op.src.ID) + " → " + shortID(res.SessionID) + continueThere,
-			reload: true, tip: res.SessionID}
+			reload: true, tip: res.SessionID, node: res.First}
 	}
 }
 
@@ -580,6 +580,7 @@ func (u uiModel) pickUp(n *tree.Node) (tea.Model, tea.Cmd) {
 	}
 	body(head)
 	u.moving = mv
+	u.offHand()
 	u.status = "moving 1 turn — ⏎ puts it here · esc puts it back"
 	return u, nil
 }
@@ -624,15 +625,18 @@ func carryCmd(a adapter.Adapter, st *store.Store, ins, drop editOp, live LiveFun
 		}
 		msg := editCmd(a, st, ins, live)().(actionDoneMsg)
 		if !msg.reload {
+			if msg.wrote {
+				msg.status += " — the source was not dropped"
+			}
 			return msg
 		}
 		drop.movedTo = msg.tip
 		cut := editCmd(a, st, drop, live)().(actionDoneMsg)
 		into := "moved into " + shortID(ins.src.ID)
 		if !cut.reload {
-			return actionDoneMsg{status: into + ", but the source was not dropped: " + cut.status, reload: true, tip: msg.tip}
+			return actionDoneMsg{status: into + ", but the source was not dropped: " + cut.status, reload: true, tip: msg.tip, node: msg.node}
 		}
-		return actionDoneMsg{status: into + " → " + shortID(msg.tip) + ", " + strings.TrimSuffix(cut.status, continueThere),
-			reload: true, tip: msg.tip}
+		return actionDoneMsg{status: into + " → " + shortID(msg.tip) + ", dropped from " + shortID(drop.src.ID) + " → " + shortID(cut.tip),
+			reload: true, tip: msg.tip, node: msg.node}
 	}
 }

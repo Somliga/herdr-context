@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"herdr-tree/internal/claude"
 	"herdr-tree/internal/store"
 )
@@ -124,17 +126,17 @@ func TestTheMovePreviewFollowsTheCursor(t *testing.T) {
 	check := func(after string) {
 		t.Helper()
 		v := view(u)
-		at, block, origin := indexOf(v, "user: prompt "+after), indexOf(v, "⇢ prompt t2"), indexOf(v, "⋯ 1 turns moving")
-		if at < 0 || block != at+1 || origin < 0 || indexOf(v, "user: prompt t2") >= 0 {
+		at, block, origin := indexOf(v, "user: prompt "+after), indexOf(v, "⇢ prompt t2"), indexOf(v, "⋯ 1 turn moving")
+		if at < 0 || block != at+1 || origin < 0 || indexOf(v, "user: prompt t2") >= 0 || !strings.HasPrefix(v[at], "> ") || strings.HasPrefix(v[origin], "> ") {
 			t.Fatalf("after %s: turn at %d, block at %d, origin at %d:\n%s", after, at, block, origin, strings.Join(v, "\n"))
 		}
 		if strings.Count(strings.Join(v, "\n"), "⇢ prompt t2") != 1 {
 			t.Fatal("the block is drawn twice")
 		}
 	}
-	u = drive(t, u, down) // skips the turns in hand, onto t3
+	// Picking up steps the cursor off what is in hand, onto t3.
 	if n := u.m.Selected(); n.Node.ID != "t3-p" {
-		t.Fatalf("down landed on %s, want t3-p past the turn in hand", n.Node.ID)
+		t.Fatalf("the cursor is on %s, want t3-p past the turn in hand", n.Node.ID)
 	}
 	check("t3")
 	u = drive(t, u, down)
@@ -171,8 +173,11 @@ func TestAMoveWithinTheLine(t *testing.T) {
 	if got := strings.Join(w.prompts(r), ","); got != "prompt t1,prompt t3,prompt t4,prompt t2" {
 		t.Fatalf("new line reads %s", got)
 	}
-	if u.moving != nil || !strings.HasPrefix(u.status, "moved 1 turns within "+shortID(sidT)+" → "+shortID(r)) {
+	if u.moving != nil || !strings.HasPrefix(u.status, "moved 1 turn within "+shortID(sidT)+" → "+shortID(r)) {
 		t.Fatalf("moving %v, status %q", u.moving != nil, u.status)
+	}
+	if n := u.m.Selected(); n == nil || n.SessionID != r || n.Node.ID != "t2-p" {
+		t.Errorf("cursor not on the moved turn")
 	}
 	for _, c := range w.h.calls {
 		if !strings.HasPrefix(c, "live") {
@@ -181,7 +186,7 @@ func TestAMoveWithinTheLine(t *testing.T) {
 	}
 	u = allOf(u)
 	checkLines(t, u, r, sidU)
-	if got := rowText(u, r, "t3-p"); !strings.Contains(got, "⇢ 1 turns moved to "+shortID(r)) {
+	if got := rowText(u, r, "t3-p"); !strings.Contains(got, "⇢ 1 turn moved to "+shortID(r)) {
 		t.Errorf("where t2 was: %q", got)
 	}
 	if moved := screen(u)[indexOf(screen(u), "user: prompt t2")]; !strings.Contains(moved, "⇠ moved from "+shortID(r)) {
@@ -203,19 +208,19 @@ func TestAMoveIntoAnotherLine(t *testing.T) {
 	if got := strings.Join(w.prompts(t1), ","); got != "prompt t1,prompt t3,prompt t4" {
 		t.Errorf("source reads %s", got)
 	}
-	want := "moved into " + shortID(sidU) + " → " + shortID(u1) + ", dropped 1 turns from " + shortID(sidT) + " → " + shortID(t1)
+	want := "moved into " + shortID(sidU) + " → " + shortID(u1) + ", dropped from " + shortID(sidT) + " → " + shortID(t1)
 	if u.status != want {
 		t.Errorf("status %q, want %q", u.status, want)
 	}
 	if got := strings.Join(w.h.calls, ", "); got != "live "+sidT+", live "+sidU+", live "+sidT {
 		t.Errorf("herdr saw %s, want the source, the target, then the source again", got)
 	}
-	if n := u.m.Selected(); n == nil || n.SessionID != u1 {
-		t.Errorf("cursor not on the target")
+	if n := u.m.Selected(); n == nil || n.SessionID != u1 || n.Node.Title != "prompt t2" {
+		t.Errorf("cursor not on the moved turn")
 	}
 	u = allOf(u)
 	checkLines(t, u, t1, u1)
-	if got := rowText(u, t1, "t3-p"); !strings.Contains(got, "⇢ 1 turns moved to "+shortID(u1)) {
+	if got := rowText(u, t1, "t3-p"); !strings.Contains(got, "⇢ 1 turn moved to "+shortID(u1)) {
 		t.Errorf("where t2 was: %q", got)
 	}
 	if moved := screen(u)[indexOf(screen(u), "user: prompt t2")]; !strings.Contains(moved, "⇠ moved from "+shortID(t1)) {
@@ -332,4 +337,56 @@ func TestMIsSwallowedInTargetMode(t *testing.T) {
 	if u.moving != nil || u.folding == nil {
 		t.Fatalf("m in target mode: moving %v, folding %v", u.moving != nil, u.folding != nil)
 	}
+}
+
+// A move within the line keeps the turn's ids: a branch off it still hangs
+// under it, and its label still shows.
+func TestAMoveWithinTheLineKeepsBranchesAndLabels(t *testing.T) {
+	w := moveWorld(t)
+	b := w.branch(sidT, sidT, "t2-r")
+	w.typeInto(b, "b1")
+	u := drive(t, cursorTo(t, w.open(sidT), sidT, "t2-p"), key('L'))
+	u = drive(t, u, append(typed("keep"), enter)...)
+	u = drive(t, cursorTo(t, u, sidT, "t2-p"), key('m'))
+	u = drive(t, cursorTo(t, u, sidT, "t4-r"), enter)
+	r := w.replacement(sidT)
+	u = allOf(u)
+	checkHangsUnder(t, u, b, "b1-p", r, "t2-r")
+	if got := rowText(u, r, "t2-p"); !strings.Contains(got, "★ keep") {
+		t.Errorf("the moved turn renders %q, want its label", got)
+	}
+	checkNoCopies(t, u)
+}
+
+// ← jumps to the row one level out; from a branch off the turn in hand that
+// is the turn itself, so the cursor steps on past it.
+func TestFoldingNeverPutsTheCursorOnTheTurnInHand(t *testing.T) {
+	w := moveWorld(t)
+	b := w.branch(sidT, sidT, "t2-r")
+	w.typeInto(b, "b1")
+	u := drive(t, cursorTo(t, allOf(w.open(sidT)), sidT, "t2-p"), key('m'))
+	u = cursorTo(t, u, b, "b1-p")
+	for _, k := range []string{"left", "left", "right"} { // fold b1, jump out, unfold
+		u = drive(t, u, tea.KeyMsg{Type: map[string]tea.KeyType{"left": tea.KeyLeft, "right": tea.KeyRight}[k]})
+		if u.moving.rows[u.m.Selected()] {
+			t.Fatalf("after %s the cursor is on the turn in hand", k)
+		}
+	}
+}
+
+// The target is written but the store cannot be saved: the turn is not left
+// in hand, since a second ⏎ would write a second copy.
+func TestAMoveWhoseStoreIsNotSavedLetsGo(t *testing.T) {
+	w := moveWorld(t)
+	u := drive(t, cursorTo(t, allOf(w.open(sidT)), sidT, "t2-p"), key('m'))
+	dir := os.Getenv("HERDR_PLUGIN_CONFIG_DIR")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	u = drive(t, cursorTo(t, u, sidU, "u1-r"), enter)
+	if u.moving != nil || !strings.Contains(u.status, "but the tree was not saved") || !strings.HasSuffix(u.status, "the source was not dropped") {
+		t.Fatalf("moving %v, status %q", u.moving != nil, u.status)
+	}
+	w.checkTranscripts(3) // T, U and the target's new line; T is untouched
 }

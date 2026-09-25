@@ -184,7 +184,9 @@ func rowBar(r Row, hasCurrent bool) string {
 func cutNote(n *tree.Node) string {
 	out := ""
 	switch {
-	case n.MovedTo != "" && n.CutHere+n.CutAfter > 0:
+	case n.MovedTo != "" && n.CutHere+n.CutAfter == 1:
+		out = "   ⇢ 1 turn moved to " + shortID(n.MovedTo)
+	case n.MovedTo != "" && n.CutHere+n.CutAfter > 1:
 		out = fmt.Sprintf("   ⇢ %d turns moved to %s", n.CutHere+n.CutAfter, shortID(n.MovedTo))
 	case n.CutHere > 0:
 		out = fmt.Sprintf("   ✂ %d turns dropped before this", n.CutHere)
@@ -323,6 +325,12 @@ type actionDoneMsg struct {
 	// session whose tip the cursor moves to.
 	reload bool
 	tip    string
+	// node, if set, is the entry of tip's session the cursor lands on
+	// instead of its tip: a moved turn (§2.8).
+	node string
+	// wrote says something was written although reload is not set (the
+	// store did not save): whatever was in hand is spent.
+	wrote bool
 }
 
 // resumeCmd and branchCmd run OFF the update loop.
@@ -531,6 +539,29 @@ func (u uiModel) cancelMove() uiModel {
 	return u
 }
 
+// stepOff repeats step until the cursor is off the section in hand, and
+// reports false, the cursor back where it was, if the rows run out first.
+func (u *uiModel) stepOff(step func()) bool {
+	was := u.m.Cursor
+	for u.moving.rows[u.m.Selected()] {
+		prev := u.m.Cursor
+		step()
+		if u.m.Cursor == prev {
+			u.m.Cursor = was
+			return false
+		}
+	}
+	return true
+}
+
+// offHand moves the cursor off the section in hand, down if it can: the
+// cursor never sits on the placeholder.
+func (u *uiModel) offHand() {
+	if !u.stepOff(u.m.Down) {
+		u.stepOff(u.m.Up)
+	}
+}
+
 func (u uiModel) Init() tea.Cmd { return nil }
 
 func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -545,6 +576,9 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			u.quitting = true
 			return u, tea.Quit
 		}
+		if msg.wrote {
+			u.moving = nil // a second ⏎ would write a second copy
+		}
 		if msg.reload {
 			u.moving = nil // put down: the rows it held are about to go
 			if sessions, err := u.a.Discover(u.repoRoot); err == nil {
@@ -552,6 +586,9 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.m.RangeEnd = nil
 				u.rebuild()
 				u.m.RevealTip(msg.tip)
+				if msg.node != "" {
+					u.m.Reveal(msg.tip, msg.node)
+				}
 			} else {
 				u.status += " (tree not refreshed: " + err.Error() + ")"
 			}
@@ -708,17 +745,18 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					step = u.m.Up
 				}
 				was := u.m.Cursor
-				for {
-					prev := u.m.Cursor
-					step()
-					if !u.moving.rows[u.m.Selected()] {
-						break
-					}
-					if u.m.Cursor == prev {
-						u.m.Cursor = was // only the section in hand that way
-						break
-					}
+				step()
+				if !u.stepOff(step) {
+					u.m.Cursor = was // only the section in hand that way
 				}
+				return u, nil
+			case "left", "h":
+				u.m.Fold()
+				u.offHand()
+				return u, nil
+			case "right", "l":
+				u.m.Unfold()
+				u.offHand()
 				return u, nil
 			case "s", "p", "b", "m":
 				return u, nil
@@ -949,7 +987,7 @@ func (u uiModel) View() string {
 			// The origin of the section in hand: one placeholder, however
 			// many of its rows are showing.
 			if !placeheld {
-				b.WriteString(marker + bar + render(StyleTool, strings.Repeat("  ", r.Depth)+"⋯ 1 turns moving") + "\n")
+				b.WriteString(marker + bar + render(StyleTool, strings.Repeat("  ", r.Depth)+"⋯ 1 turn moving") + "\n")
 			}
 			placeheld = true
 		} else {

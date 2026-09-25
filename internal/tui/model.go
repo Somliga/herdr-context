@@ -584,17 +584,38 @@ func (m *Model) RevealTip(sid string) {
 			tip = r
 		}
 	}
-	if tip == nil {
+	m.reveal(tip)
+}
+
+// Reveal puts the cursor on session sid's entry id, as RevealTip does for a
+// tip.
+func (m *Model) Reveal(sid, id string) {
+	for n := range m.parent {
+		if n.SessionID == sid && n.Node.ID == id {
+			m.reveal(n)
+			return
+		}
+	}
+	for _, r := range m.Roots {
+		if r.SessionID == sid && r.Node.ID == id {
+			m.reveal(r)
+			return
+		}
+	}
+}
+
+func (m *Model) reveal(n *tree.Node) {
+	if n == nil {
 		return
 	}
 	// Rows() lets a folded node hide only its own session's body entries.
-	for c, p := tip, m.parent[tip]; p != nil; c, p = p, m.parent[p] {
+	for c, p := n, m.parent[n]; p != nil; c, p = p, m.parent[p] {
 		if c.SessionID == p.SessionID && !c.IsHead {
 			delete(m.Folded, p)
 		}
 	}
 	for i, r := range m.Rows() {
-		if r.Node == tip {
+		if r.Node == n {
 			m.Cursor = i
 			return
 		}
