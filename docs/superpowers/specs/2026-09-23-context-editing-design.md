@@ -182,6 +182,46 @@ into it · esc cancels`.
   dropped. If step 4 fails, the status says `squashed into <x>, but the source
   was not dropped: <err>` — a copy, nothing lost.
 
+### 2.8 move — carry turns verbatim
+
+**Picking up.** `m` on a turn picks up that turn (its prompt and everything
+under it). A range's menu gains **move** (`squash · squash into… · move ·
+drop`), which picks up the widened range. Status `moving <n> turns — ⏎ puts
+them here · esc puts them back`.
+
+**Moving.** The picked-up turns are drawn as a dimmed `⇢ …` block directly
+after the turn under the cursor, following it; their origin shows a dimmed
+`⋯ <n> turns moving`. Nothing is written; nothing is billed. `s`, `p`, `b`,
+`m` are swallowed.
+
+**`⏎` commits** after the turn under the cursor (whole turns, §3.1):
+- **Same line:** one splice — the turns are removed and re-inserted after the
+  target turn; the line is replaced by the reordered version (§5).
+- **Another line:** the turns are inserted into the target line after the
+  target turn (the target is replaced, §5), then dropped from the source (the
+  source is replaced, a drop). Target first, then source — if the drop fails
+  the status says `moved into <x>, but the source was not dropped: <err>`: a
+  copy, nothing lost.
+- The busy checks (§6.1) and the changed-elsewhere check (§5.1) run on every
+  line written. No pane opens (§6).
+- **Markers:** the source shows `⇢ <n> turns moved to <id8>` where they were
+  (a drop marker with a destination); the target shows `⇠ moved from <id8>`
+  on the first moved turn.
+
+**`esc`** cancels: nothing was written.
+
+**Refused** (status, still moving): the target turn is inside the picked-up
+range, or is the turn right before it (a no-op); a move that would take every
+turn out of its line.
+
+**Fresh ids.** Moved entries get new uuids in the target (their parentUuid
+links rewritten within the moved set; the first moved entry parented to the
+target turn's last entry, the entry after the insertion re-parented to the
+last moved one). The target may already hold copies of those turns (a branch
+shares history), and a duplicate uuid in one file would corrupt it.
+tool_use / tool_result ids are kept: pairs never leave their turn (§3.1), so
+the result is still what the Messages API accepts.
+
 ## 3. The splice
 
 `claude.Splice`, next to `GraftSeeded` in `internal/claude/graft.go`.
