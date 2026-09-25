@@ -1527,3 +1527,130 @@ func TestKeysOnABranchsFirstTurnActOnTheTurn(t *testing.T) {
 		t.Errorf("b did not branch at BEATS: %+v", st.Branches)
 	}
 }
+
+// TestAMergedSummaryStartsItsOwnSection is §5.3f, on real files whose turns
+// end with a turn_duration entry (w.durations): merging a stored summary
+// onto HORSE22's tip lands the ⤶ row as its own section — at HORSE22's own
+// depth, right after it — HORSE22 stays folded, and the cursor is on the ⤶
+// row. A reply typed after the seed then folds under the seed itself, like
+// any other section.
+func TestAMergedSummaryStartsItsOwnSection(t *testing.T) {
+	w := newWorld(t)
+	w.durations = true
+	w.trunk(sidT, "NUGGET", "TRIPPLEDIP")
+	b := w.branch(sidT, sidT, "TRIPPLEDIP-p")
+	w.typeInto(b, "BEATS", "BEATS22")
+	c := w.branch(sidT, sidT, "TRIPPLEDIP-p")
+	w.typeInto(c, "HORSE", "HORSE22")
+
+	// Squash all of B, storing a summary p can later place elsewhere.
+	u := allOf(w.open(c))
+	u = selectRange(t, u, b, "BEATS-p", "BEATS22-r", 0)
+	u = drive(t, u, enter)
+	if w.summaries() != 1 {
+		t.Fatalf("%d summary calls, want 1; status %q", w.summaries(), u.status)
+	}
+
+	// p at HORSE22's tip, merge here, confirm.
+	u = cursorTo(t, u, c, "HORSE22-r")
+	u = drive(t, u, key('p'))
+	if u.picking == nil {
+		t.Fatalf("no summary offered: %q", u.status)
+	}
+	u = drive(t, u, enter) // the only summary on offer
+	if u.menu != "place" {
+		t.Fatalf("no place menu: %q", u.status)
+	}
+	u = drive(t, u, enter) // merge here
+	if !strings.Contains(u.confirm, "Merge the summary after turn") {
+		t.Fatalf("no merge confirmation: %q", u.confirm)
+	}
+	u = drive(t, u, enter) // confirm
+
+	r := w.replacement(c)
+	seed := u.m.Selected()
+	if seed == nil || seed.SessionID != r || seed.Node.Kind != adapter.KindSummaryImport {
+		t.Fatalf("cursor is not on the merged seed: %+v (status %q)", seed, u.status)
+	}
+	rows := u.m.Rows()
+	if u.m.Cursor == 0 {
+		t.Fatalf("nothing precedes the seed")
+	}
+	prev := rows[u.m.Cursor-1]
+	if prev.Node.SessionID != r || prev.Node.Node.ID != "HORSE22-p" {
+		t.Fatalf("the seed does not directly follow HORSE22's section head, got %+v", prev)
+	}
+	if rows[u.m.Cursor].Depth != prev.Depth {
+		t.Fatalf("seed depth %d, want HORSE22's own depth %d", rows[u.m.Cursor].Depth, prev.Depth)
+	}
+	if !u.m.Folded[prev.Node] {
+		t.Fatalf("HORSE22 must stay folded — the merge must not unfold the turn before the seed")
+	}
+
+	// An assistant reply after the seed — not a new prompt — is the seed's
+	// own body, one level under it, and hidden by the seed's own default
+	// fold, exactly like any other section's body.
+	w.appendLines(w.path(r), []map[string]any{{
+		"type": "assistant", "uuid": "NEXT-r", "parentUuid": seed.Node.ID, "sessionId": r, "cwd": w.repo,
+		"version": "2.1.278", "timestamp": w.tick(), "isSidechain": false, "userType": "external",
+		"requestId": "req-NEXT-1",
+		"message":   map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "ok"}}},
+	}})
+	unf := allOf(w.open(c))
+	seedIdx, nextIdx := rowOf(unf, r, seed.Node.ID), rowOf(unf, r, "NEXT-r")
+	if seedIdx < 0 || nextIdx < 0 {
+		t.Fatalf("seed or NEXT-r missing:\n%s", strings.Join(screen(unf), "\n"))
+	}
+	unfRows := unf.m.Rows()
+	if nextIdx != seedIdx+1 || unfRows[nextIdx].Depth != unfRows[seedIdx].Depth+1 {
+		t.Fatalf("NEXT-r must be the seed's own body: seed row %+v, NEXT-r row %+v", unfRows[seedIdx], unfRows[nextIdx])
+	}
+
+	folded := allOf(w.open(c)) // fresh, default fold state
+	var sawSeed, sawNext bool
+	for _, row := range folded.m.Rows() {
+		if row.Node.SessionID != r {
+			continue
+		}
+		switch row.Node.Node.ID {
+		case seed.Node.ID:
+			sawSeed = true
+			if !row.Folded {
+				t.Fatalf("the seed's new reply must be folded by default")
+			}
+		case "NEXT-r":
+			sawNext = true
+		}
+	}
+	if !sawSeed {
+		t.Fatalf("the seed row is missing from the default view")
+	}
+	if sawNext {
+		t.Fatalf("NEXT-r must be hidden while the seed's own section is folded by default")
+	}
+}
+
+// TestASquashSeedStartsTheFirstSection is §5.3f's other half: a squash of a
+// line's first turn writes a new session whose first entry IS the ⤶
+// squashed seed, and it renders as the first section — not the body of
+// nothing before it — with the remaining turns as their own sections at the
+// same depth.
+func TestASquashSeedStartsTheFirstSection(t *testing.T) {
+	w := newWorld(t)
+	w.trunk(sidT, "t1", "t2", "t3")
+	u := selectRange(t, w.open(sidT), sidT, "t1-p", "t1-r", 0)
+	u = drive(t, u, enter)
+	r := w.replacement(sidT)
+
+	rows := allOf(w.open(r)).m.Rows()
+	if len(rows) < 2 {
+		t.Fatalf("want at least the seed and t2's head, got %+v", rows)
+	}
+	seed, next := rows[0], rows[1]
+	if seed.Node.SessionID != r || seed.Node.Node.Kind != adapter.KindSummaryCompaction || seed.Depth != 0 {
+		t.Fatalf("the squash seed must be the first section, at depth 0: %+v", seed)
+	}
+	if next.Node.SessionID != r || next.Node.Node.ID != "t2-p" || next.Depth != seed.Depth {
+		t.Fatalf("t2 must follow the seed as its own section, at the same depth: %+v", next)
+	}
+}

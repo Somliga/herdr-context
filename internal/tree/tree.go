@@ -33,9 +33,10 @@ type Node struct {
 	CutHere    int // turns dropped immediately before this entry
 	CutAfter   int // turns dropped after this entry, which ends its line
 	Label      string
-	// IsHead marks a section head: a human prompt, or the first entry of a
-	// session that does not start with one. Everything until the next head is
-	// that section's body.
+	// IsHead marks a section head: a human prompt, a ⤶ summary row (which
+	// opens a turn exactly like a prompt, §3.1/§5.3f), or the first entry of a
+	// session that does not start with either. Everything until the next head
+	// is that section's body.
 	IsHead   bool
 	Children []*Node
 }
@@ -162,7 +163,10 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 			nodeIndex[sess.ID][t.ID] = n
 			order[sess.ID] = append(order[sess.ID], n)
 
-			isHead := t.Kind == adapter.KindHuman || head == nil
+			isHead := t.Kind == adapter.KindHuman ||
+				t.Kind == adapter.KindSummaryImport ||
+				t.Kind == adapter.KindSummaryCompaction ||
+				head == nil
 			switch {
 			case head == nil && prev == nil:
 				// first node of the session

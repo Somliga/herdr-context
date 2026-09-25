@@ -222,6 +222,31 @@ func TestPromptHeadsASectionWithRepliesAndToolCallsAsItsBody(t *testing.T) {
 	}
 }
 
+// A ⤶ row opens a turn just like a human prompt (§3.1), so it must start its
+// own section rather than being swallowed into the body of the turn before
+// it (§5.3f).
+func TestASummaryRowStartsItsOwnSection(t *testing.T) {
+	for _, kind := range []adapter.Kind{adapter.KindSummaryImport, adapter.KindSummaryCompaction} {
+		roots := Build([]adapter.Session{sessWithKinds("s1",
+			adapter.KindHuman, adapter.KindAssistant, kind, adapter.KindAssistant,
+		)}, emptyStore())
+		n1 := roots[0]
+		if len(n1.Children) != 2 {
+			t.Fatalf("kind %v: n1 children %d want 2 (n2, then the summary n3)", kind, len(n1.Children))
+		}
+		n2, n3 := n1.Children[0], n1.Children[1]
+		if n2.IsHead {
+			t.Fatalf("kind %v: n2 (assistant) must not be a head", kind)
+		}
+		if !n3.IsHead {
+			t.Fatalf("kind %v: the ⤶ row must be a section head, not folded into n1's body", kind)
+		}
+		if len(n3.Children) != 1 || n3.Children[0].Node.ID != "n4" || n3.Children[0].IsHead {
+			t.Fatalf("kind %v: n4 must be the ⤶ row's own body, got %+v", kind, n3.Children)
+		}
+	}
+}
+
 func TestFirstTurnIsAHeadEvenWhenNotHuman(t *testing.T) {
 	// A session that does not start with a human turn still needs a head to
 	// hang its body off.
