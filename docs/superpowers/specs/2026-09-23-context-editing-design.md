@@ -220,8 +220,12 @@ links rewritten within the moved set; the first moved entry parented to the
 target turn's last entry, the entry after the insertion re-parented to the
 last moved one). The target may already hold copies of those turns (a branch
 shares history), and a duplicate uuid in one file would corrupt it.
-tool_use / tool_result ids are kept: pairs never leave their turn (§3.1), so
-the result is still what the Messages API accepts.
+A **same-line** move keeps every id — nothing is duplicated within one file, and
+branches and labels on the moved turn keep resolving. A **cross-line** move
+rewrites, consistently within the moved turn, its uuids, requestIds,
+`message.id`s and tool_use ids (each `tool_result`'s `tool_use_id` with them):
+the target may hold copies carrying the same ids, and a repeated requestId or
+message id would merge or mis-assign turns.
 
 ## 3. The splice
 
