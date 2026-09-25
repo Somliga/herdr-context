@@ -36,7 +36,14 @@ func main() {
 			continue
 		}
 		orphanUses, orphanResults := getSourceOrphans(es)
-		sourceOrphans := struct{ orphanUses, orphanResults map[string]bool }{orphanUses, orphanResults}
+		// A uuid the source already holds twice is copied twice by any splice.
+		dups, seen := map[string]bool{}, map[string]bool{}
+		for _, e := range es {
+			if u := e.UUID(); u != "" {
+				dups[u], seen[u] = seen[u], true
+			}
+		}
+		sourceOrphans := struct{ orphanUses, orphanResults, dups map[string]bool }{orphanUses, orphanResults, dups}
 
 		var prompts []string
 		for _, e := range es {
@@ -81,6 +88,32 @@ func main() {
 			default:
 				bad++
 				fmt.Printf("BAD %s insert after turn %d: %s\n", shortID(p), i+1, r)
+			}
+		}
+		// Two moves within the line: the first turn to after the last, and
+		// the last to after the first.
+		if n := len(prompts); n >= 2 {
+			self := &adapter.Session{Path: p}
+			for _, m := range []struct {
+				what string
+				e    adapter.Edit
+			}{
+				{"the first turn later", adapter.Edit{From: prompts[0], To: prompts[0], After: prompts[n-1], Carry: self}},
+				{"the last turn earlier", adapter.Edit{From: prompts[n-1], To: prompts[n-1], After: prompts[0], Carry: self}},
+			} {
+				tried++
+				r, refusReason := check(p, m.e, sourceOrphans)
+				switch r {
+				case "":
+					ok++
+				case "refused":
+					recordRefusal(refusReason, &refusedNotOnLine, &refusedNothingLeft, &refusedVersion, &refusedPartial, &refusedUnmarked, &refusedOther)
+				case "inherited":
+					inherited++
+				default:
+					bad++
+					fmt.Printf("BAD %s moving %s: %s\n", shortID(p), m.what, r)
+				}
 			}
 		}
 	}
@@ -155,7 +188,7 @@ func recordRefusal(refusReason error, notOnLine, nothingLeft, version, partial, 
 // check splices once and validates the result. returns ("", nil) for valid,
 // ("refused", err) for a splice Splice declined, ("inherited", nil) for
 // defects inherited from the source, and (defect name, nil) for introduced defects.
-func check(path string, e adapter.Edit, sourceOrphans struct{ orphanUses, orphanResults map[string]bool }) (string, error) {
+func check(path string, e adapter.Edit, sourceOrphans struct{ orphanUses, orphanResults, dups map[string]bool }) (string, error) {
 	res, err := claude.Splice(path, e, "/splicecheck")
 	if err != nil {
 		return "refused", err
@@ -173,6 +206,9 @@ func check(path string, e adapter.Edit, sourceOrphans struct{ orphanUses, orphan
 	uses, results := map[string]bool{}, map[string]bool{}
 	for _, en := range es {
 		if u := en.UUID(); u != "" {
+			if have[u] && !sourceOrphans.dups[u] {
+				return "a uuid is in the file twice", nil
+			}
 			have[u] = true
 		}
 		msg, _ := en.Raw["message"].(map[string]any)

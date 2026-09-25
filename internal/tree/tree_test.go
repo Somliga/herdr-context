@@ -650,3 +650,33 @@ func TestALabelFollowsItsTurnAlongTheReplacesChain(t *testing.T) {
 		t.Fatalf("labels on the newest line %v, want t3 old, t4 newer, t1 none", got)
 	}
 }
+
+// §2.8: a move leaves a drop marker with its destination where the turns
+// were, and a moved-from marker on the first moved turn. Both name the line
+// that now stands in that session's place, and both survive a later edit.
+func TestMoveMarkersNameTheOtherLine(t *testing.T) {
+	st := &store.Store{Branches: map[string]store.Branch{}}
+	st.Replace("dst", "dst1", store.Branch{Kind: store.KindMoved, MovedFrom: &store.Moved{SessionID: "src", At: "m1"}})
+	st.Replace("src", "src1", store.Branch{Kind: store.KindCut, Cut: &store.Cut{Turns: 2, At: "s3", To: "dst1"}})
+	st.Replace("dst1", "dst2", store.Branch{Kind: store.KindCompacted})
+	roots := Build([]adapter.Session{sess("dst2", "d1", "m1", "d2"), sess("src1", "s1", "s3")}, st)
+	var to, from string
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		if n.SessionID == "src1" && n.Node.ID == "s3" && n.CutHere == 2 {
+			to = n.MovedTo
+		}
+		if n.SessionID == "dst2" && n.Node.ID == "m1" {
+			from = n.MovedFrom
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	for _, r := range roots {
+		walk(r)
+	}
+	if to != "dst2" || from != "src1" {
+		t.Fatalf("moved to %q, moved from %q; want dst2 and src1", to, from)
+	}
+}

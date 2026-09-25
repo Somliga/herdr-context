@@ -263,3 +263,207 @@ func TestCuttingATurnAfterANativeCompactKeepsTheBoundaryAsRoot(t *testing.T) {
 		t.Fatalf("boundary under %q, u4 under %q", parent(by["cb"]), parent(by["u4"]))
 	}
 }
+
+// moved maps each source uuid to the entry of the spliced file that carries
+// the same line: every splice.jsonl entry has its own timestamp, which a move
+// copies verbatim.
+func moved(t *testing.T, src string, by map[string]Entry) map[string]Entry {
+	t.Helper()
+	es, _, err := ParseFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := map[string]Entry{}
+	for _, e := range by {
+		at[e.str("timestamp")] = e
+	}
+	out := map[string]Entry{}
+	for _, e := range es {
+		if n, ok := at[e.str("timestamp")]; ok && e.UUID() != "" {
+			out[e.UUID()] = n
+		}
+	}
+	return out
+}
+
+// checkMoved asserts each of ids is in the output under a fresh uuid, never
+// its old one, with its parent mapped inside the moved set.
+func checkMoved(t *testing.T, by map[string]Entry, m map[string]Entry, ids ...string) {
+	t.Helper()
+	set := map[string]bool{}
+	for _, id := range ids {
+		set[id] = true
+	}
+	for _, id := range ids {
+		n, ok := m[id]
+		if !ok {
+			t.Fatalf("%s did not move", id)
+		}
+		if n.UUID() == id {
+			t.Errorf("%s moved under its old uuid", id)
+		}
+		if _, ok := by[id]; ok {
+			t.Errorf("%s is still in the file under its old uuid", id)
+		}
+	}
+}
+
+func leafOf(t *testing.T, sid string) string {
+	t.Helper()
+	path, _ := filepath.Glob(filepath.Join(ProjectsDir(), "*", sid+".jsonl"))
+	es, _, _ := ParseFile(path[0])
+	leaf := ""
+	for _, e := range es {
+		if e.Type() == "last-prompt" {
+			leaf, _ = e.Raw["leafUuid"].(string)
+		}
+	}
+	return leaf
+}
+
+var turn2 = []string{"u2", "a2", "a2b", "tr1", "tr2", "at2", "a2c"}
+
+// Turn 2, with its parallel tool calls, moved after turn 4: 1, 3, 4, 2.
+func TestAMoveLaterWithinTheLine(t *testing.T) {
+	src := "testdata/splice.jsonl"
+	self := &adapter.Session{ID: "S", Path: src}
+	res, by, order := spliced(t, src, adapter.Edit{From: "a2b", To: "a2b", After: "a4", Carry: self})
+	m := moved(t, src, by)
+	checkMoved(t, by, m, turn2...)
+	if parent(by["u3"]) != "a1" {
+		t.Errorf("u3 under %q, want a1: the gap closes", parent(by["u3"]))
+	}
+	if parent(m["u2"]) != "a4" {
+		t.Errorf("moved u2 under %q, want a4", parent(m["u2"]))
+	}
+	for child, p := range map[string]string{"a2": "u2", "a2b": "a2", "tr1": "a2", "tr2": "a2b", "at2": "u2", "a2c": "tr1"} {
+		if parent(m[child]) != m[p].UUID() {
+			t.Errorf("moved %s under %q, want moved %s", child, parent(m[child]), p)
+		}
+	}
+	if got := leafOf(t, res.SessionID); got != m["a2c"].UUID() {
+		t.Errorf("leaf %q, want the moved a2c", got)
+	}
+	// File order follows the new line.
+	var got []string
+	for _, u := range order {
+		if u == m["u2"].UUID() {
+			u = "u2*"
+		}
+		if u == "u1" || u == "u3" || u == "u4" || u == "u2*" {
+			got = append(got, u)
+		}
+	}
+	if strings.Join(got, ",") != "u1,u3,u4,u2*" {
+		t.Errorf("turn order %v, want u1,u3,u4,u2*", got)
+	}
+	if res.Removed != 1 || res.First != m["u2"].UUID() || res.After != "u3" {
+		t.Errorf("result %+v, want 1 moved, first the moved u2, after u3", res)
+	}
+}
+
+// Turn 4 moved after turn 1: 1, 4, 2, 3. The line now ends on turn 3.
+func TestAMoveEarlierWithinTheLine(t *testing.T) {
+	src := "testdata/splice.jsonl"
+	self := &adapter.Session{ID: "S", Path: src}
+	res, by, _ := spliced(t, src, adapter.Edit{From: "u4", To: "a4", After: "u1", Carry: self})
+	m := moved(t, src, by)
+	checkMoved(t, by, m, "u4", "a4")
+	if parent(m["u4"]) != "a1" || parent(m["a4"]) != m["u4"].UUID() {
+		t.Errorf("moved u4 under %q, a4 under %q", parent(m["u4"]), parent(m["a4"]))
+	}
+	if parent(by["u2"]) != m["a4"].UUID() {
+		t.Errorf("u2 under %q, want the moved a4", parent(by["u2"]))
+	}
+	if got := leafOf(t, res.SessionID); got != "a3" {
+		t.Errorf("leaf %q, want a3", got)
+	}
+	if res.After != "" || res.First != m["u4"].UUID() {
+		t.Errorf("result %+v", res)
+	}
+}
+
+// T is a branch of S: it holds S's turns 1 and 2 under the same uuids, then
+// one of its own. Moving S's turn 2 into T after b1 copies it under fresh
+// uuids, so T never holds one uuid twice.
+func TestAMoveIntoALineThatHoldsCopiesOfTheTurns(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := os.ReadFile("testdata/splice.jsonl")
+	var lines []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.Contains(l, `"uuid":"u3"`) {
+			break
+		}
+		if !strings.Contains(l, `"x1"`) && !strings.Contains(l, `"xa1"`) {
+			lines = append(lines, strings.ReplaceAll(l, `"sessionId":"S"`, `"sessionId":"T"`))
+		}
+	}
+	lines = append(lines,
+		`{"type":"user","uuid":"b1","parentUuid":"a2c","sessionId":"T","timestamp":"2026-01-02T12:00:00Z","message":{"role":"user","content":[{"type":"text","text":"own"}]}}`,
+		`{"type":"assistant","uuid":"ba1","parentUuid":"b1","sessionId":"T","requestId":"rb","timestamp":"2026-01-02T12:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"own reply"}]}}`)
+	dst := filepath.Join(dir, "T.jsonl")
+	if err := os.WriteFile(dst, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srcBefore, _ := os.ReadFile("testdata/splice.jsonl")
+
+	res, by, order := spliced(t, dst, adapter.Edit{From: "u2", To: "a2c", After: "ba1",
+		Carry: &adapter.Session{ID: "S", Path: "testdata/splice.jsonl"}})
+	if after, _ := os.ReadFile("testdata/splice.jsonl"); string(after) != string(srcBefore) {
+		t.Fatal("a move modified the line it carried from")
+	}
+	seen := map[string]bool{}
+	for _, u := range order {
+		if seen[u] {
+			t.Fatalf("%s is in the file twice", u)
+		}
+		seen[u] = true
+	}
+	for _, id := range turn2 {
+		if _, ok := by[id]; !ok {
+			t.Errorf("T's own copy of %s was lost", id)
+		}
+	}
+	if len(order) != len(lines)+len(turn2) {
+		t.Fatalf("%d entries, want T's %d plus 7 moved", len(order), len(lines))
+	}
+	var first Entry
+	for _, e := range by {
+		if parent(e) == "ba1" {
+			first = e
+		}
+	}
+	if first.Text() != "two" || res.First != first.UUID() || res.Removed != 1 {
+		t.Fatalf("after ba1 comes %q (%s), result %+v; want the moved prompt two", first.Text(), first.UUID(), res)
+	}
+	if got := leafOf(t, res.SessionID); got == "ba1" || by[got].Text() != "reply two" {
+		t.Errorf("leaf %q, want the moved a2c", got)
+	}
+}
+
+func TestMoveRefuses(t *testing.T) {
+	t.Setenv("CLAUDE_PROJECTS_DIR", t.TempDir())
+	src := "testdata/splice.jsonl"
+	self := &adapter.Session{ID: "S", Path: src}
+	for name, c := range map[string]struct {
+		dst  string
+		e    adapter.Edit
+		want error
+	}{
+		"into itself":            {src, adapter.Edit{From: "u2", To: "u3", After: "a2b", Carry: self}, ErrMoveNowhere},
+		"after the turn before":  {src, adapter.Edit{From: "u2", To: "u3", After: "a1", Carry: self}, ErrMoveNowhere},
+		"every turn of its line": {src, adapter.Edit{From: "u1", To: "a4", After: "u1", Carry: self}, ErrMoveNowhere},
+		"every turn elsewhere":   {"testdata/parallel.jsonl", adapter.Edit{From: "u1", To: "a4", After: "u1", Carry: self}, ErrNothingLeft},
+		"the preamble":           {src, adapter.Edit{From: "pre1", To: "a1", After: "a4", Carry: self}, ErrMovePreamble},
+		"a target off the line":  {src, adapter.Edit{From: "u2", To: "a2", After: "x1", Carry: self}, ErrNotOnLine},
+		"a range off the line":   {src, adapter.Edit{From: "x1", To: "xa1", After: "a4", Carry: self}, ErrNotOnLine},
+		"a seed":                 {src, adapter.Edit{From: "u2", To: "a2", After: "a4", Carry: self, Seed: seedText}, ErrMoveSeed},
+	} {
+		if _, err := Splice(c.dst, c.e, t.TempDir()); !errors.Is(err, c.want) {
+			t.Fatalf("%s: err = %v, want %v", name, err, c.want)
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(ProjectsDir(), "*", "*.jsonl")); len(left) != 0 {
+		t.Fatalf("a refused move wrote %v", left)
+	}
+}

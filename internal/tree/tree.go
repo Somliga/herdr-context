@@ -30,8 +30,10 @@ type Node struct {
 	// this copy of it renders no row (see attachPoint). Its children are
 	// still walked, exactly like a filtered-out node.
 	Superseded bool
-	CutHere    int // turns dropped immediately before this entry
-	CutAfter   int // turns dropped after this entry, which ends its line
+	CutHere    int    // turns dropped immediately before this entry
+	CutAfter   int    // turns dropped after this entry, which ends its line
+	MovedTo    string // the cut was a move to this line (§2.8)
+	MovedFrom  string // this entry opens turns moved here from this line
 	Label      string
 	// IsHead marks a section head: a human prompt, a ⤶ summary row (which
 	// opens a turn exactly like a prompt, §3.1/§5.3f), or the first entry of a
@@ -284,14 +286,24 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 			continue
 		}
 		for _, id := range s.Versions(sess.ID) {
+			if mv := s.Branches[id].MovedFrom; mv != nil {
+				if n := nodeIndex[sess.ID][mv.At]; n != nil {
+					n.MovedFrom = s.Resolve(mv.SessionID)
+				}
+			}
 			cut := s.Branches[id].Cut
 			if cut == nil {
 				continue
 			}
-			if n := nodeIndex[sess.ID][cut.At]; n != nil {
+			n := nodeIndex[sess.ID][cut.At]
+			if n != nil {
 				n.CutHere += cut.Turns
-			} else if n := leafOf[sess.ID]; n != nil {
+			} else if n = leafOf[sess.ID]; n != nil {
 				n.CutAfter += cut.Turns
+			}
+			if n != nil && cut.To != "" {
+				// ponytail: a drop and a move on one anchor add up and read as a move
+				n.MovedTo = s.Resolve(cut.To)
 			}
 		}
 	}

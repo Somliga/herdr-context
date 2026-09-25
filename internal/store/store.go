@@ -35,19 +35,30 @@ type Branch struct {
 	Replaces   string `json:"replaces,omitempty"`
 	Kind       string `json:"kind,omitempty"`
 	Cut        *Cut   `json:"cut,omitempty"`
+	// MovedFrom, on the line turns were moved into, is where they came from.
+	MovedFrom *Moved `json:"moved_from,omitempty"`
+}
+
+// Moved names the first moved entry in the target and the session the turns
+// were moved from.
+type Moved struct {
+	SessionID string `json:"session_id"`
+	At        string `json:"at"`
 }
 
 // Cut is what the tree needs to mark a removed stretch: nothing about a cut
 // is left in the transcript itself.
 type Cut struct {
 	Turns int    `json:"turns"`
-	At    string `json:"at"` // first entry after the cut; "" when nothing follows
+	At    string `json:"at"`           // first entry after the cut; "" when nothing follows
+	To    string `json:"to,omitempty"` // a move: the session the turns went to
 }
 
 const (
 	KindCompacted = "compacted"
 	KindCut       = "cut"
 	KindInserted  = "inserted"
+	KindMoved     = "moved"
 )
 
 // Summary is an LLM summary of a RANGE of turns. It belongs to a span, not a
@@ -69,7 +80,7 @@ type Store struct {
 	// Landmarking a turn is deliberately separate from branching from it: in
 	// practice you notice a point matters before you know whether you will go
 	// back to it, and a label costs nothing while a branch costs a session.
-	Labels    map[string]string `json:"labels,omitempty"`
+	Labels    map[string]string  `json:"labels,omitempty"`
 	Summaries map[string]Summary `json:"summaries,omitempty"`
 
 	path          string

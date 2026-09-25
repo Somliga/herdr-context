@@ -10,6 +10,15 @@ import (
 // ErrNothingLeft means a cut would remove every turn of the line.
 var ErrNothingLeft = errors.New("a cut must leave at least one turn")
 
+// A move is refused, nothing written, when it would put its turns back
+// where they are, when it would carry the preamble (which is no turn), and
+// when it is handed a seed: a move carries turns verbatim.
+var (
+	ErrMoveNowhere  = errors.New("that puts the turns back where they are")
+	ErrMovePreamble = errors.New("only whole turns move, not what precedes the first prompt")
+	ErrMoveSeed     = errors.New("a move carries turns, not a seed")
+)
+
 func parseForEdit(srcPath string) (*line, error) {
 	es, skipped, err := ParseFile(srcPath)
 	if err != nil {
@@ -43,6 +52,9 @@ func Widen(srcPath, from, to string) (adapter.Span, error) {
 // before the range. Entry uuids are kept, so branches and cut markers that
 // name them still resolve. The source is never modified.
 func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error) {
+	if e.Carry != nil {
+		return move(srcPath, e, dstCWD)
+	}
 	if e.Seed != "" && !strings.HasPrefix(e.Seed, SummaryPrefix) && !strings.HasPrefix(e.Seed, CompactionPrefix) {
 		return adapter.Spliced{}, ErrUnmarkedSeed
 	}
@@ -147,4 +159,150 @@ func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, err
 		removed = 0
 	}
 	return adapter.Spliced{SessionID: sid, Removed: removed, After: after}, nil
+}
+
+// move is Splice for an Edit with Carry (§2.8): Carry's widened From..To is
+// written verbatim after the turn of dstPath's e.After. When Carry is
+// dstPath's own session the range leaves its old place in the same pass;
+// otherwise Carry's file is only read.
+//
+// The moved entries get fresh uuids: the target may already hold copies of
+// them (a branch shares history), and one uuid twice corrupts a file. Every
+// top-level field naming a moved entry is rewritten with it; the first moved
+// entry hangs on the target turn's last entry, and the entry after the
+// insertion on the last moved one. tool_use ids are kept: pairs never leave
+// their turn (§3.1).
+func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error) {
+	if e.Seed != "" {
+		return adapter.Spliced{}, ErrMoveSeed
+	}
+	l, err := parseForEdit(dstPath)
+	if err != nil {
+		return adapter.Spliced{}, err
+	}
+	same := sourcePath(*e.Carry) == dstPath
+	from := l
+	if !same {
+		if from, err = parseForEdit(sourcePath(*e.Carry)); err != nil {
+			return adapter.Spliced{}, err
+		}
+	}
+	a, b, err := from.span(e.From, e.To)
+	if err != nil {
+		return adapter.Spliced{}, err
+	}
+	at, ok := l.turn[e.After]
+	switch {
+	case !ok:
+		return adapter.Spliced{}, ErrNotOnLine
+	case a == 0:
+		return adapter.Spliced{}, ErrMovePreamble
+	case same && at >= a-1 && at <= b:
+		return adapter.Spliced{}, ErrMoveNowhere
+	case !same && a <= 1 && b >= from.last:
+		return adapter.Spliced{}, ErrNothingLeft
+	}
+	carried := func(ln *line, u string) bool {
+		t := ln.turn[u]
+		return ln == from && t >= a && t <= b
+	}
+	orNull := func(u string) any {
+		if u == "" {
+			return nil
+		}
+		return u
+	}
+
+	sid, err := newUUIDv4()
+	if err != nil {
+		return adapter.Spliced{}, err
+	}
+	fresh := map[string]string{}
+	for _, en := range from.es {
+		if u := en.UUID(); u != "" && from.keep[u] && carried(from, u) {
+			if fresh[u], err = newUUIDv4(); err != nil {
+				return adapter.Spliced{}, err
+			}
+		}
+	}
+	var block []byte
+	for _, en := range from.es {
+		u := en.UUID()
+		if u == "" || !from.keep[u] || !carried(from, u) {
+			continue
+		}
+		m := rehome(en, sid, dstCWD)
+		for k, v := range m {
+			if s, ok := v.(string); ok && fresh[s] != "" {
+				m[k] = fresh[s]
+			}
+		}
+		if u == from.firstOf(a) {
+			m["parentUuid"] = orNull(l.lastOf(at))
+		}
+		enc, err := Marshal(Entry{Raw: m})
+		if err != nil {
+			return adapter.Spliced{}, err
+		}
+		block = append(append(block, enc...), '\n')
+	}
+	first, last := fresh[from.firstOf(a)], fresh[from.lastOf(b)]
+
+	// next is where the block goes: the first entry after the target turn.
+	// gap, within the line only, is the first entry after where it was.
+	var next, gap string
+	for _, u := range l.chain {
+		if carried(l, u) {
+			continue
+		}
+		if t := l.turn[u]; t > at && next == "" {
+			next = u
+		}
+		if t := l.turn[u]; same && t > b && gap == "" {
+			gap = u
+		}
+	}
+
+	var buf []byte
+	for _, en := range l.es {
+		u := en.UUID()
+		if u == "" || !l.keep[u] || carried(l, u) {
+			continue
+		}
+		m := rehome(en, sid, dstCWD)
+		switch u {
+		case next:
+			buf = append(buf, block...)
+			m["parentUuid"] = last
+		case gap:
+			m["parentUuid"] = orNull(l.lastOf(a - 1))
+		}
+		enc, err := Marshal(Entry{Raw: m})
+		if err != nil {
+			return adapter.Spliced{}, err
+		}
+		buf = append(append(buf, enc...), '\n')
+	}
+
+	leaf := l.chain[len(l.chain)-1]
+	switch {
+	case next == "":
+		buf = append(buf, block...)
+		leaf = last
+	case same && gap == "":
+		leaf = l.lastOf(a - 1) // the line's last turns moved earlier
+	}
+	lp, err := Marshal(Entry{Raw: map[string]any{"type": "last-prompt", "leafUuid": leaf, "sessionId": sid}})
+	if err != nil {
+		return adapter.Spliced{}, err
+	}
+	buf = append(append(buf, lp...), '\n')
+	if _, err := writeSession(dstCWD, sid, buf); err != nil {
+		return adapter.Spliced{}, err
+	}
+	out := adapter.Spliced{SessionID: sid, Removed: b - a + 1, First: first}
+	if same {
+		out.After = gap
+	}
+	return out, nil
 }

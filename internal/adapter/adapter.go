@@ -43,7 +43,7 @@ type Node struct {
 type Session struct {
 	ID      string
 	CWD     string
-	Path    string    // where the transcript file was found
+	Path    string // where the transcript file was found
 	Title   string
 	Updated time.Time
 	Nodes   []Node // ordered root -> leaf
@@ -82,10 +82,16 @@ type Adapter interface {
 // widened to whole turns, to remove; Seed, if set, takes its place. After,
 // used instead of a range, names an entry after whose turn Seed is inserted
 // and nothing is removed. A range with no Seed is a cut.
+//
+// Carry, set with From..To and After, makes the edit a move: Carry's
+// widened range is written verbatim after After's turn. Carry naming the
+// edited session itself moves the turns within its line; any other session
+// is only read, and dropping the range from it is a separate cut.
 type Edit struct {
 	From, To string
 	After    string
 	Seed     string
+	Carry    *Session
 }
 
 // Span is a selection widened to whole turns.
@@ -102,6 +108,7 @@ type Span struct {
 // Spliced is what a splice wrote.
 type Spliced struct {
 	SessionID string
-	Removed   int    // whole turns removed, not counting the preamble
+	Removed   int    // whole turns removed (a move: moved), not counting the preamble
 	After     string // the first entry after the edit, "" when nothing follows
+	First     string // a move: the first moved entry, under its new uuid
 }

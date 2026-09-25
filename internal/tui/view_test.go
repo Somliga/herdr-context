@@ -35,7 +35,7 @@ func TestRenderRowMarksCurrent(t *testing.T) {
 
 func TestRenderRowShowsSessionIdOnRoots(t *testing.T) {
 	n := &tree.Node{
-		Node: adapter.Node{ID: "n1", Title: "x"},
+		Node:      adapter.Node{ID: "n1", Title: "x"},
 		SessionID: "82cb69f2-e18b-4f86-874a-89e93139324a", IsSessionRoot: true,
 	}
 	// §5.3e: the id is on the root's header line, not on its turn.
@@ -58,7 +58,7 @@ func TestRenderRowMarksBroken(t *testing.T) {
 
 func TestRenderRowMarksGraft(t *testing.T) {
 	n := &tree.Node{
-		Node: adapter.Node{ID: "m1", Title: "alt"},
+		Node:      adapter.Node{ID: "m1", Title: "alt"},
 		SessionID: "f2af34a4-x", IsSessionRoot: true, Grafted: true,
 	}
 	// §5.3e: a branch's header sits one level out from its turn.
@@ -98,11 +98,11 @@ type fakeAdapter struct {
 	discoverErr error
 }
 
-func (f *fakeAdapter) Name() string                               { return "fake" }
+func (f *fakeAdapter) Name() string { return "fake" }
 func (f *fakeAdapter) Discover(string) ([]adapter.Session, error) {
 	return f.sessions, f.discoverErr
 }
-func (f *fakeAdapter) Current(adapter.Pane) (string, error)       { return "", nil }
+func (f *fakeAdapter) Current(adapter.Pane) (string, error) { return "", nil }
 func (f *fakeAdapter) Preview(adapter.Session, string) (int, int, int64, error) {
 	return 1, 2, 3, nil
 }
@@ -150,7 +150,11 @@ func (f *fakeAdapter) Splice(src adapter.Session, e adapter.Edit, _ string) (ada
 	if n > 1 {
 		sid = fmt.Sprintf("spliced%d-sid", n)
 	}
-	return adapter.Spliced{SessionID: sid, Removed: 2, After: "t3"}, nil
+	res := adapter.Spliced{SessionID: sid, Removed: 2, After: "t3"}
+	if e.Carry != nil {
+		res.First = "moved-" + e.After
+	}
+	return res, nil
 }
 
 func TestFailedResumeKeepsTheOverlayOpen(t *testing.T) {
@@ -893,10 +897,10 @@ func TestBranchHereGraftsAfterTheWholeTurn(t *testing.T) {
 	u.m.Cursor = 0 // an earlier turn, not the tip
 
 	after, _ := u.Update(key('p'))
-	after2, _ := after.(uiModel).Update(tea.KeyMsg{Type: tea.KeyEnter})     // picks the summary
-	after3, _ := after2.(uiModel).Update(tea.KeyMsg{Type: tea.KeyDown})     // place menu: branch here
-	after4, _ := after3.(uiModel).Update(tea.KeyMsg{Type: tea.KeyEnter})    // shows the cost
-	_, cmd := after4.(uiModel).Update(tea.KeyMsg{Type: tea.KeyEnter})       // confirms
+	after2, _ := after.(uiModel).Update(tea.KeyMsg{Type: tea.KeyEnter})  // picks the summary
+	after3, _ := after2.(uiModel).Update(tea.KeyMsg{Type: tea.KeyDown})  // place menu: branch here
+	after4, _ := after3.(uiModel).Update(tea.KeyMsg{Type: tea.KeyEnter}) // shows the cost
+	_, cmd := after4.(uiModel).Update(tea.KeyMsg{Type: tea.KeyEnter})    // confirms
 	if cmd == nil {
 		t.Fatal("want foldBackCmd once confirmed")
 	}
