@@ -167,7 +167,7 @@ tip still resumes it unchanged.
 > line it is on: the one ending at the latest entry, in file order, whose
 > ancestor chain holds it (`WidenBranch`). The graft then carries that
 > history up to the end of the turn. Only if no such line exists is the graft
-> at the row's own entry. Squash, drop and move still refuse such a turn
+> at the row's own entry. Squash, drop, move and merge here still refuse such a turn
 > (§3.3): they rewrite the current line, which does not hold it.
 
 ### 2.5c `⏎` continues, `b` branches
@@ -228,7 +228,7 @@ after the turn under the cursor, following it; their origin shows a dimmed
   the status says `moved into <x>, but the source was not dropped: <err>`: a
   copy, nothing lost. If the drop is written but the store cannot be saved,
   it says `moved into <x>, and the source's drop was written but not
-  recorded: <err>` — the drop's file exists, and the tree does not know it.
+  recorded: <err>` — the drop's file exists and this overlay shows the drop, but the record is not saved to disk (the next successful save writes it).
 - The busy checks (§6.1) and the changed-elsewhere check (§5.1) run on every
   line written. No pane opens (§6).
 - **Markers** (another line only): the source shows `⇢ 1 turn moved to

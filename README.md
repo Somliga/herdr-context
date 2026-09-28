@@ -138,6 +138,6 @@ Claude Code's transcript format is undocumented. herdr-tree is verified
 against Claude Code 2.1.x and refuses to write rather than guess when it sees
 another version. Turns before a native `/compact` still show in the tree,
 and ⏎, `b` and branch here work on them: the new line carries the history
-before the compact, up to the end of that turn. Squash, drop and move on them
+before the compact, up to the end of that turn. Squash, drop, move and merge here on them
 are refused ("that entry is not on this session's current line"): those
 rewrite the current line, which no longer holds them.

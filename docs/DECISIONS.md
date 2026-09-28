@@ -48,8 +48,8 @@ obvious from it.
   `b` and branch here widen through `WidenBranch`: a turn not on the
   session's current line (before a native `/compact`, or on a rewound stretch)
   is widened on the line it is on — the one ending at the latest entry whose
-  ancestor chain holds it — and the graft carries that history. Squash, drop
-  and move keep `Widen` and refuse such turns: they rewrite the current line,
+  ancestor chain holds it — and the graft carries that history. Squash, drop,
+  move and merge here keep `Widen` and refuse such turns: they rewrite the current line,
   which does not hold them. Why: a branch only reads the file, and branching
   from before a `/compact` worked before whole-turn widening broke it.
 
