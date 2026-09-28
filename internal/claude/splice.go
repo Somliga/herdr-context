@@ -174,7 +174,7 @@ func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, err
 // target may hold copies under the same ids, and a repeated requestId or
 // message id would merge or mis-assign turns. The first moved entry hangs on
 // the target turn's last entry, and the entry after the insertion on the last
-// moved one.
+// moved one. A ⤶ squashed turn moved into another line is relabelled.
 func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error) {
 	if e.Seed != "" {
 		return adapter.Spliced{}, ErrMoveSeed
@@ -247,6 +247,9 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 		m := renamed(rehome(en, sid, dstCWD), fresh).(map[string]any)
 		if u == from.firstOf(mt) {
 			m["parentUuid"] = orNull(l.lastOf(at))
+			if !same {
+				relabel(m, e.Carry.ID)
+			}
 		}
 		enc, err := Marshal(Entry{Raw: m})
 		if err != nil {
@@ -313,6 +316,29 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 		out.After = gap
 	}
 	return out, nil
+}
+
+// relabel makes m, a moved turn's first entry, a ⤶ merged from src8 seed if
+// it is a ⤶ squashed one (§2.8): it is knowledge arriving in another line,
+// not a contraction of it. Only the prefix changes; m is already a copy.
+func relabel(m map[string]any, src string) {
+	msg, _ := m["message"].(map[string]any)
+	blocks, _ := msg["content"].([]any)
+	for _, b := range blocks {
+		bm, _ := b.(map[string]any)
+		if bm["type"] != "text" {
+			continue
+		}
+		t, _ := bm["text"].(string)
+		if !strings.HasPrefix(t, CompactionPrefix) {
+			return // the text opens with its first block
+		}
+		bm["text"] = SummaryPrefix + " " + src[:min(8, len(src))] + strings.TrimPrefix(t, CompactionPrefix)
+		if k, ok := m["herdrTree"].(map[string]any); ok {
+			k["kind"] = "summary"
+		}
+		return
+	}
 }
 
 // carriedIDs is every id other than its uuid that e carries and a copy must

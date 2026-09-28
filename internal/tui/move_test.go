@@ -9,8 +9,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"herdr-tree/internal/adapter"
 	"herdr-tree/internal/claude"
 	"herdr-tree/internal/store"
+	"herdr-tree/internal/tree"
 )
 
 // prompts is sid's prompt texts in line order, as the agent would read them.
@@ -381,6 +383,69 @@ func TestAMoveWhoseStoreIsNotSavedLetsGo(t *testing.T) {
 		t.Fatalf("moving %v, status %q", u.moving != nil, u.status)
 	}
 	w.checkTranscripts(3) // T, U and the target's new line; T is untouched
+}
+
+// squashRow squashes sid's t2..t3 and returns the replacement and its ⤶ row.
+func squashRow(t *testing.T, w *world, sid string) (string, *tree.Node) {
+	t.Helper()
+	u := drive(t, selectRange(t, allOf(w.open(sid)), sid, "t2-p", "t3-r", 0), enter, enter)
+	r := w.replacement(sid)
+	return r, seedRow(t, u, r)
+}
+
+// seedRow is sid's one ⤶ row.
+func seedRow(t *testing.T, u uiModel, sid string) *tree.Node {
+	t.Helper()
+	unfold(u)
+	for _, row := range u.m.Rows() {
+		if k := row.Node.Node.Kind; row.Node.SessionID == sid && (k == adapter.KindSummaryImport || k == adapter.KindSummaryCompaction) {
+			return row.Node
+		}
+	}
+	t.Fatalf("no ⤶ row in %s", shortID(sid))
+	return nil
+}
+
+// A squashed stretch moved into another line arrives there as knowledge:
+// its ⤶ squashed row becomes ⤶ merged from its source, orange (§2.8).
+func TestASquashMovedIntoAnotherLineIsRelabelled(t *testing.T) {
+	w := moveWorld(t)
+	t1, seed := squashRow(t, w, sidT)
+	u := allOf(w.open(t1))
+	u = drive(t, cursorTo(t, u, t1, seed.Node.ID), key('m'))
+	u = drive(t, cursorTo(t, u, sidU, "u1-r"), enter)
+	t2, u1 := w.replacement(t1), w.replacement(sidU)
+
+	u = allOf(u)
+	moved := seedRow(t, u, u1)
+	rest := strings.TrimPrefix(seed.Node.Title, claudeCompactionPrefix)
+	if moved.Node.Kind != adapter.KindSummaryImport || moved.Node.Title != claudeSummaryPrefix+" "+shortID(t1)+rest {
+		t.Fatalf("the moved row is %v %q, want an import reading %q", moved.Node.Kind, moved.Node.Title, claudeSummaryPrefix+" "+shortID(t1)+rest)
+	}
+	line := screen(u)[rowOf(u, u1, moved.Node.ID)]
+	if _, key := renderRow(u.m.Rows()[rowOf(u, u1, moved.Node.ID)], false, u.current, 0); key != StyleImport ||
+		!strings.Contains(line, "⤶ merged from "+shortID(t1)) {
+		t.Errorf("the moved row renders %q as %v, want ⤶ merged from %s as an import", line, key, shortID(t1))
+	}
+	if got := rowText(u, t2, "t4-p"); !strings.Contains(got, "⇢ 1 turn moved to "+shortID(u1)) {
+		t.Errorf("where the ⤶ row was: %q", got)
+	}
+}
+
+// Within its own line a ⤶ squashed row is still that line's contraction.
+func TestASquashMovedWithinItsLineKeepsItsText(t *testing.T) {
+	w := moveWorld(t)
+	t1, seed := squashRow(t, w, sidT)
+	u := drive(t, cursorTo(t, w.open(t1), t1, seed.Node.ID), key('m'))
+	u = drive(t, cursorTo(t, u, t1, "t4-r"), enter)
+	t2 := w.replacement(t1)
+	moved := seedRow(t, u, t2)
+	if moved.Node.Kind != adapter.KindSummaryCompaction || moved.Node.Title != seed.Node.Title {
+		t.Fatalf("the moved row is %v %q, want the unchanged %q", moved.Node.Kind, moved.Node.Title, seed.Node.Title)
+	}
+	if rowOf(u, t2, moved.Node.ID) < rowOf(u, t2, "t4-r") {
+		t.Error("the ⤶ row did not move after t4")
+	}
 }
 
 // The range menu is squash and drop, nothing else.
