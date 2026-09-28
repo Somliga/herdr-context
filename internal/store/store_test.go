@@ -500,6 +500,45 @@ func TestSaveMergesUndoneByTheLaterToggle(t *testing.T) {
 	}
 }
 
+// Overlay A loads P->V. Overlay B undoes V (P is current again), then edits
+// P, making P->N. A, still holding the stale P->V, saves something
+// unrelated (a label). The merge must not resurrect V over N.
+func TestSaveMergePrefersTheReplacementThatIsNotUndone(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
+	seed, _ := Load("/repo")
+	seed.Replace("p", "v", Branch{})
+	if err := seed.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	a, _ := Load("/repo") // A: sees P->V, V not undone
+	b, _ := Load("/repo") // B: will undo V, then edit P->N
+
+	vb := b.Branches["v"]
+	vb.Undone, vb.UndoneAt = true, time.Now().UTC()
+	b.Branches["v"] = vb
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+	b.Replace("p", "n", Branch{})
+	if err := b.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	a.SetLabel("p", "t1", "landmark")
+	if err := a.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	after, _ := Load("/repo")
+	if got := after.Current("p"); got != "n" {
+		t.Fatalf("Current(p) = %q after a stale save, want n", got)
+	}
+	if after.Branches["p"].ReplacedBy != "n" {
+		t.Fatalf("p.replaced_by = %q, want n", after.Branches["p"].ReplacedBy)
+	}
+}
+
 func TestCurrentOnDiskSeesAnotherOverlaysUndo(t *testing.T) {
 	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
 	s1, _ := Load("/repo")

@@ -338,17 +338,30 @@ func (s *Store) Save() error {
 				s.Branches[id] = b
 				continue
 			}
-			// Replacement is one-way: a store loaded before it must not
-			// clear it by saving something unrelated.
-			if ours.ReplacedBy == "" && b.ReplacedBy != "" {
-				ours.ReplacedBy = b.ReplacedBy
-				s.Branches[id] = ours
-			}
-			// Undone toggles both ways: the later toggle wins.
-			ours = s.Branches[id]
+			// Undone toggles both ways: the later toggle wins. Merged first
+			// so the replacement pass below can tell which side's named
+			// replacement is undone.
 			if b.UndoneAt.After(ours.UndoneAt) {
 				ours.Undone, ours.UndoneAt = b.Undone, b.UndoneAt
 				s.Branches[id] = ours
+			}
+		}
+		for id, b := range onDisk.Branches {
+			ours := s.Branches[id]
+			switch {
+			// Replacement is one-way: a store loaded before it must not
+			// clear it by saving something unrelated.
+			case ours.ReplacedBy == "":
+				ours.ReplacedBy = b.ReplacedBy
+				s.Branches[id] = ours
+			// Both sides independently named a replacement (one overlay
+			// undid the old one and made a new one while a stale overlay
+			// still holds the undone one): prefer whichever is not undone.
+			case b.ReplacedBy != "" && b.ReplacedBy != ours.ReplacedBy:
+				if s.Branches[ours.ReplacedBy].Undone && !s.Branches[b.ReplacedBy].Undone {
+					ours.ReplacedBy = b.ReplacedBy
+					s.Branches[id] = ours
+				}
 			}
 		}
 		for k, v := range onDisk.Labels {
