@@ -137,7 +137,7 @@ func TestHeaderShowsTheContextNumber(t *testing.T) {
 }
 
 func TestHumanTokens(t *testing.T) {
-	for n, want := range map[int]string{999: "<1k", 1000: "1k", 84210: "84k", 889384: "889k", 1_234_000: "1.2M"} {
+	for n, want := range map[int]string{999: "<1k", 1000: "1k", 84210: "84k", 889384: "889k", 1_234_000: "1.2M", 999_499: "999k", 999_500: "1.0M"} {
 		if got := humanTokens(n); got != want {
 			t.Fatalf("humanTokens(%d) = %q, want %q", n, got, want)
 		}
