@@ -577,3 +577,79 @@ func lineEntry(l string) (Entry, error) {
 	err := json.Unmarshal([]byte(l), &m)
 	return Entry{Raw: m}, err
 }
+
+// Server-side tools (web search) and MCP connector tools are answered inside
+// the assistant's own message: a server_tool_use or mcp_tool_use block, then
+// a *_tool_result block naming it. A cross-line move renews their ids like a
+// tool_use's, so a target holding a copy of the turn carries no id twice and
+// each result still names its call.
+func TestAMoveRenewsServerAndMCPToolIDs(t *testing.T) {
+	dir := t.TempDir()
+	asst := func(sid, uuid, parent, req string, block string) string {
+		return `{"type":"assistant","uuid":"` + uuid + `","parentUuid":"` + parent + `","sessionId":"` + sid + `","requestId":"` + req +
+			`","timestamp":"2026-01-01T12:00:03Z","message":{"id":"msg_` + req + `","role":"assistant","content":[` + block + `]}}`
+	}
+	user := func(sid, uuid, parent, text string) string {
+		p := `"` + parent + `"`
+		if parent == "" {
+			p = "null"
+		}
+		return `{"type":"user","uuid":"` + uuid + `","parentUuid":` + p + `,"sessionId":"` + sid +
+			`","timestamp":"2026-01-01T12:00:01Z","message":{"role":"user","content":[{"type":"text","text":"` + text + `"}]}}`
+	}
+	shared := func(sid string) []string {
+		return []string{
+			user(sid, "u1", "", "one"),
+			asst(sid, "a1", "u1", "r1", `{"type":"text","text":"reply one"}`),
+			user(sid, "u2", "a1", "search"),
+			asst(sid, "s1", "u2", "r2", `{"type":"server_tool_use","id":"srvtoolu_01","name":"web_search","input":{"query":"q"}}`),
+			asst(sid, "s2", "s1", "r2", `{"type":"web_search_tool_result","tool_use_id":"srvtoolu_01","content":[]}`),
+			asst(sid, "s3", "s2", "r2", `{"type":"mcp_tool_use","id":"mcptoolu_01","name":"fetch","server_name":"docs","input":{}}`),
+			asst(sid, "s4", "s3", "r2", `{"type":"mcp_tool_result","tool_use_id":"mcptoolu_01","content":[]}`),
+			asst(sid, "s5", "s4", "r2", `{"type":"text","text":"found it"}`),
+		}
+	}
+	srcPath, dst := filepath.Join(dir, "S.jsonl"), filepath.Join(dir, "T.jsonl")
+	tLines := append(shared("T"), user("T", "b1", "s5", "own"), asst("T", "ba1", "b1", "rb", `{"type":"text","text":"own reply"}`))
+	for p, ls := range map[string][]string{srcPath: shared("S"), dst: tLines} {
+		if err := os.WriteFile(p, []byte(strings.Join(ls, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res, _, _ := spliced(t, dst, adapter.Edit{From: "u2", After: "ba1", Carry: &adapter.Session{ID: "S", Path: srcPath}})
+	es, _, _ := ParseFile(splicedPath(t, res.SessionID))
+	calls, answers := map[string]int{}, map[string]int{}
+	for _, e := range es {
+		msg, _ := e.Raw["message"].(map[string]any)
+		blocks, _ := msg["content"].([]any)
+		for _, b := range blocks {
+			bm, _ := b.(map[string]any)
+			typ, _ := bm["type"].(string)
+			switch {
+			case strings.HasSuffix(typ, "tool_use"):
+				calls[bm["id"].(string)]++
+			case strings.HasSuffix(typ, "tool_result"):
+				answers[bm["tool_use_id"].(string)]++
+			}
+		}
+	}
+	if len(calls) != 4 {
+		t.Fatalf("tool call ids %v: want T's two and two renewed ones", calls)
+	}
+	for id, n := range calls {
+		if n != 1 || answers[id] != 1 {
+			t.Errorf("tool call %s appears %d times, answered %d times", id, n, answers[id])
+		}
+	}
+	for _, id := range []string{"srvtoolu_01", "mcptoolu_01"} {
+		if calls[id] != 1 {
+			t.Errorf("T's own %s is not kept once", id)
+		}
+	}
+	for id := range calls {
+		if !strings.HasPrefix(id, "srvtoolu_") && !strings.HasPrefix(id, "mcptoolu_") {
+			t.Errorf("renewed id %s lost its prefix", id)
+		}
+	}
+}

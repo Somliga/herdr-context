@@ -342,7 +342,9 @@ func relabel(m map[string]any, src string) {
 }
 
 // carriedIDs is every id other than its uuid that e carries and a copy must
-// not share: its requestId, its message id and its tool_use ids.
+// not share: its requestId, its message id and the id of every tool call
+// block — tool_use, server_tool_use, mcp_tool_use, whatever *_tool_use comes
+// next. renamed rewrites the *_tool_result blocks that name them.
 func carriedIDs(e Entry) []string {
 	ids := []string{e.RequestID()}
 	msg, _ := e.Raw["message"].(map[string]any)
@@ -351,7 +353,8 @@ func carriedIDs(e Entry) []string {
 	}
 	blocks, _ := msg["content"].([]any)
 	for _, b := range blocks {
-		if bm, _ := b.(map[string]any); bm["type"] == "tool_use" {
+		bm, _ := b.(map[string]any)
+		if typ, _ := bm["type"].(string); strings.HasSuffix(typ, "tool_use") {
 			if id, _ := bm["id"].(string); id != "" {
 				ids = append(ids, id)
 			}
