@@ -2,6 +2,7 @@ package tui
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -231,5 +232,56 @@ func TestEnterAfterUndoHandsOverFromTheUndoneVersion(t *testing.T) {
 		if !strings.HasPrefix(c, "live") {
 			t.Fatalf("something was resumed or closed: %v", w.h.calls)
 		}
+	}
+}
+
+// A move's redo needs both lines where the move left them: T, edited and
+// that edit undone, no longer leads to the move, so U on U redoes nothing.
+func TestRedoAMoveIsRefusedIfTheOtherLineMovedOn(t *testing.T) {
+	w := undoWorld(t)
+	u, _, u1 := moveTtoU(t, w)
+	u = drive(t, cursorTo(t, u, u1, "u2-p"), key('u'))
+	u = drive(t, selectRange(t, u, sidT, "t3-p", "t3-r", 1), enter)
+	t2 := w.replacement(sidT)
+	u = drive(t, cursorTo(t, u, t2, "t1-p"), key('u'))
+	checkLines(t, u, sidT, sidU)
+	before := w.storeFile()
+
+	u = drive(t, cursorTo(t, u, sidU, "u1-p"), key('U'))
+	if want := "nothing to redo on " + shortID(sidU); u.status != want {
+		t.Fatalf("status %q, want %q", u.status, want)
+	}
+	if w.storeFile() != before {
+		t.Error("a refused redo wrote the store")
+	}
+	checkLines(t, u, sidT, sidU)
+	if n := strings.Count(shown(u), "prompt t2"); n != 1 {
+		t.Errorf("prompt t2 shows %d times:\n%s", n, shown(u))
+	}
+}
+
+// A failed save puts the undo back, so a later save cannot write it.
+func TestAnUndoThatIsNotSavedIsPutBack(t *testing.T) {
+	w := undoWorld(t)
+	u := drive(t, selectRange(t, w.open(sidT), sidT, "t1-p", "t1-r", 0), enter, enter)
+	t1 := w.replacement(sidT)
+	dir := filepath.Dir(w.storePath())
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+
+	u = drive(t, u, key('u'))
+	if !strings.HasPrefix(u.status, "not saved: ") {
+		t.Fatalf("status %q", u.status)
+	}
+	if b := u.st.Branches[t1]; b.Undone || !b.UndoneAt.IsZero() {
+		t.Fatalf("in memory %s is still undone: %v at %v", shortID(t1), b.Undone, b.UndoneAt)
+	}
+	os.Chmod(dir, 0o700)
+	u = drive(t, cursorTo(t, u, t1, "t3-p"), key('L'))
+	u = drive(t, u, append(typed("keep"), enter)...)
+	if st, _ := store.Load(w.repo); st.Labels[store.LabelKey(t1, "t3-p")] != "keep" || st.Branches[t1].Undone || st.Current(sidT) != t1 {
+		t.Errorf("a later save wrote the undo: current %s", shortID(st.Current(sidT)))
 	}
 }

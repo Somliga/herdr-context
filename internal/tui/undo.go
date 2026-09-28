@@ -30,7 +30,15 @@ func redoCmd(st *store.Store, sid string, live LiveFunc) tea.Cmd {
 		if next == "" || !st.Branches[next].Undone {
 			return actionDoneMsg{status: "nothing to redo on " + shortID(cur)}
 		}
-		return toggle(st, st.Group(next), false, live, "redone "+editWord(st.Branches[next])+" on ", next)
+		// Every line of the edit must still lead to it: one whose version
+		// was edited again since has its own redo path (§2.2).
+		group := st.Group(next)
+		for _, id := range group {
+			if st.Branches[st.Branches[id].Replaces].ReplacedBy != id {
+				return actionDoneMsg{status: "nothing to redo on " + shortID(cur)}
+			}
+		}
+		return toggle(st, group, false, live, "redone "+editWord(st.Branches[next])+" on ", next)
 	}
 }
 
@@ -71,7 +79,7 @@ func toggle(st *store.Store, group []string, undo bool, live LiveFunc, word, tip
 		for _, v := range st.Lineage(expect) {
 			_, status, err := live(v)
 			if err != nil {
-				return actionDoneMsg{status: "cannot tell whether this session is open: " + err.Error()}
+				return actionDoneMsg{status: "cannot tell whether this session is open: " + err.Error() + " — nothing was written"}
 			}
 			if busy(status) {
 				return actionDoneMsg{status: "agent is " + status + " — wait for it to finish"}
@@ -79,12 +87,18 @@ func toggle(st *store.Store, group []string, undo bool, live LiveFunc, word, tip
 		}
 	}
 	now := time.Now().UTC()
+	was := map[string]store.Branch{}
 	for _, id := range group {
 		b := st.Branches[id]
+		was[id] = b
 		b.Undone, b.UndoneAt = undo, now
 		st.Branches[id] = b
 	}
 	if err := st.Save(); err != nil {
+		// Put it back: a later save, of a label say, must not write it.
+		for id, b := range was {
+			st.Branches[id] = b
+		}
 		return actionDoneMsg{status: "not saved: " + err.Error()}
 	}
 	return actionDoneMsg{status: word + shortID(tip) + continueThere, reload: true, tip: tip}
