@@ -390,6 +390,31 @@ func TestAMoveWhoseStoreIsNotSavedLetsGo(t *testing.T) {
 	w.checkTranscripts(3) // T, U and the target's new line; T is untouched
 }
 
+// The target is written and recorded, then the source's drop is written but
+// the store cannot be saved: the drop exists, unrecorded, so the status must
+// not say the source was not dropped.
+func TestAMoveWhoseDropIsNotRecordedSaysSo(t *testing.T) {
+	w := moveWorld(t)
+	u := drive(t, cursorTo(t, allOf(w.open(sidT)), sidT, "t2-p"), key('m'))
+	dir := filepath.Dir(w.storePath())
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	u.live = func(sid string) (string, string, error) {
+		// The drop's own check, right before it splices: the target is
+		// recorded by now.
+		if st, _ := store.Load(w.repo); sid == sidT && st.Resolve(sidU) != sidU {
+			if err := os.Chmod(dir, 0o500); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return "", "", nil
+	}
+	u = drive(t, cursorTo(t, u, sidU, "u1-r"), enter)
+	if strings.Contains(u.status, "not dropped") || !strings.Contains(u.status, "written but not recorded") || !strings.Contains(u.status, "the tree was not saved") {
+		t.Fatalf("status %q", u.status)
+	}
+	w.checkTranscripts(4) // T, U, the target's new line and the source's unrecorded drop
+}
+
 // squashRow squashes sid's t2..t3 and returns the replacement and its ⤶ row.
 func squashRow(t *testing.T, w *world, sid string) (string, *tree.Node) {
 	t.Helper()

@@ -671,6 +671,10 @@ func carryCmd(a adapter.Adapter, st *store.Store, ins, drop editOp, live LiveFun
 		drop.movedTo = msg.tip
 		cut := editCmd(a, st, drop, live)().(actionDoneMsg)
 		into := "moved into " + shortID(ins.src.ID)
+		if cut.wrote {
+			// The drop's file exists; only its record is missing.
+			return actionDoneMsg{status: into + ", and the source's drop was written but not recorded: " + cut.status, reload: true, tip: msg.tip, node: msg.node}
+		}
 		if !cut.reload {
 			return actionDoneMsg{status: into + ", but the source was not dropped: " + cut.status, reload: true, tip: msg.tip, node: msg.node}
 		}

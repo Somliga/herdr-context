@@ -239,7 +239,9 @@ after the turn under the cursor, following it; their origin shows a dimmed
   target turn (the target is replaced, §5), then dropped from the source (the
   source is replaced, a drop). Target first, then source — if the drop fails
   the status says `moved into <x>, but the source was not dropped: <err>`: a
-  copy, nothing lost.
+  copy, nothing lost. If the drop is written but the store cannot be saved,
+  it says `moved into <x>, and the source's drop was written but not
+  recorded: <err>` — the drop's file exists, and the tree does not know it.
 - The busy checks (§6.1) and the changed-elsewhere check (§5.1) run on every
   line written. No pane opens (§6).
 - **Markers** (another line only): the source shows `⇢ 1 turn moved to
