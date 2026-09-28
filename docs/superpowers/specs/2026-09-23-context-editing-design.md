@@ -16,10 +16,9 @@ code is authoritative. In short, what is current:
   (§2.5); a delivered summary is recognised through `<pasted_content>` (§2.5d).
 - Tree: family scope, `▎` path bar, always-indented branches, session header
   lines, `⤶` rows as section heads (§5.3b–§5.3f).
-- Known differences, code wins: the busy guard is an allowlist — only `idle`
-  (or no agent) is safe, not "refuse if `working`" (§6.1); the drop marker
-  reads `✂ N turns dropped before this` / `after this` (§5.4); the busy
-  re-check status names the status (`agent is <status>`, §6.1 step 3).
+- §6.1 and §5.4 now match the code: the busy guard is an allowlist (only
+  `idle`, or no agent, is safe) and names the status; the drop marker reads
+  `✂ N turns dropped before this` / `after this`.
 - Decisions and deferred minors: `docs/DECISIONS.md`.
 
 Earlier status: approved; amended 2026-09-23 after the first manual run (§2.2,
@@ -502,7 +501,8 @@ unfolding the turn before it.
 
 ### 5.4 Markers
 
-- **Drop**: the row after the drop shows `✂ <n> turns dropped` in the muted
+- **Drop**: the row after the drop shows `✂ <n> turns dropped before this` (or, on
+  the last row when nothing follows, `… after this`) in the muted
   style. It comes from the store record; nothing about the drop is in the
   transcript.
 - **Squash / merge**: the seeded entry renders blue or orange through its
@@ -519,11 +519,12 @@ An edit never opens or closes a pane. The handover happens when the user moves.
 ### 6.1 The edit
 
 1. **At confirm**: resolve the session's live agent and its `agent_status`
-   (`parseAgentList` keeps it alongside the pane id). If `working`, refuse
-   (§2.4); nothing is written.
+   (`parseAgentList` keeps it alongside the pane id). If anything but `idle`
+   (a status herdr reports for a running or waiting agent), refuse (§2.4),
+   naming the status; nothing is written.
 2. (continue only) Summarise.
-3. **Re-check `agent_status` immediately before splicing.** If `working`: write
-   nothing, status `summary stored — agent is busy; select again or use p`.
+3. **Re-check `agent_status` immediately before splicing.** If not `idle`:
+   write nothing, status `summary stored — agent is <status>; select again or use p`.
 4. Splice, save the store, reload with the cursor on the new line's tip.
 
 A pane that was running the old line keeps running it. Anything typed there
