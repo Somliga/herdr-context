@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -36,6 +38,7 @@ type editOp struct {
 	title     string     // row title for the new record
 	dst       string
 	movedTo   string // a cut that is a move's drop: where the turns went
+	editID    string // shared by a cross-line move's two records, so they undo together
 }
 
 // summariseRange makes the billed summary call over op's range and stores
@@ -236,18 +239,18 @@ func squashCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) (su
 	return summarise, commit
 }
 
-// changedElsewhere is §5.1's refusal: "" if no line in sids was replaced
-// on disk since st loaded, else why the edit is refused. It is asked right
-// before anything is paid for or written, and again before a splice that
-// follows a summary. ponytail: a window is left between the check and the
+// changedElsewhere is §5.1's refusal: "" if every line in sids is still
+// current on disk, as st loaded it, else why the edit is refused. It is
+// asked right before anything is paid for or written, and again before a
+// splice that follows a summary. ponytail: a window is left between the check and the
 // splice's Save, which Save's merge settles for the later edit.
 func changedElsewhere(st *store.Store, sids ...string) string {
 	for _, sid := range sids {
-		replaced, err := st.ReplacedOnDisk(sid)
+		cur, err := st.CurrentOnDisk(sid)
 		if err != nil {
 			return "cannot tell whether this line was changed in another overlay: " + err.Error() + " — nothing was written"
 		}
-		if replaced {
+		if cur != sid {
 			return "this line was changed in another overlay — reopen the tree"
 		}
 	}
@@ -312,7 +315,7 @@ func editCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) tea.C
 		if err != nil {
 			return actionDoneMsg{status: verb(op.kind) + " failed: " + scrubbed(err, op.edit.Seed)}
 		}
-		b := store.Branch{Kind: op.kind, Title: op.title, CreatedAt: time.Now().UTC()}
+		b := store.Branch{Kind: op.kind, Title: op.title, CreatedAt: time.Now().UTC(), Edit: op.editID}
 		if op.kind == store.KindCut {
 			b.Cut = &store.Cut{Turns: res.Removed, At: res.After, To: op.movedTo}
 		}
@@ -382,9 +385,11 @@ func (u uiModel) openTip(n *tree.Node) (tea.Model, tea.Cmd) {
 		}
 	}
 	if u.live != nil && u.st != nil {
-		seen := map[string]bool{n.SessionID: true}
-		for old := u.st.Branches[n.SessionID].Replaces; old != "" && !seen[old]; old = u.st.Branches[old].Replaces {
-			seen[old] = true
+		// Every other version of the line, an undone one too (§2.5).
+		for _, old := range u.st.Lineage(n.SessionID) {
+			if old == n.SessionID {
+				continue
+			}
 			pane, status, err := u.live(old)
 			if err != nil {
 				u.status = "cannot tell whether the old line is still open: " + err.Error()
@@ -643,12 +648,21 @@ func (u uiModel) putDown(at *tree.Node) (tea.Model, tea.Cmd) {
 	return u, carryCmd(u.a, u.st, ins, drop, u.live)
 }
 
+// newEditID is a fresh id for the records one edit writes.
+func newEditID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 // carryCmd is a move into another line (§2.8): the source is asked first,
 // then ins writes the turns into the target (asking it), and only if that
 // landed does drop take them out of the source, asking it again. Target
 // first: if the drop fails, the turns are in two places, never in none.
 func carryCmd(a adapter.Adapter, st *store.Store, ins, drop editOp, live LiveFunc) tea.Cmd {
 	return func() tea.Msg {
+		ins.editID = newEditID()
+		drop.editID = ins.editID
 		if stale := changedElsewhere(st, drop.src.ID); stale != "" {
 			return actionDoneMsg{status: stale}
 		}

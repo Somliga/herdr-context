@@ -712,6 +712,11 @@ func TestBIsSwallowedDuringARangeAMenuAndAConfirmation(t *testing.T) {
 	if cmd != nil || len(fa.writes) != 0 {
 		t.Fatalf("b acted mid-range: writes %v", fa.writes)
 	}
+	for _, k := range "uU" {
+		if _, cmd := press(t, u, key(k)); cmd != nil {
+			t.Fatalf("%c acted mid-range", k)
+		}
+	}
 
 	// The range menu.
 	u, cmd = press(t, u, enter)
@@ -756,7 +761,7 @@ func TestEveryFooterFitsIn80Columns(t *testing.T) {
 		u := uiModel{m: New(session("s", ids...)), st: loadedStore(t), current: "s", width: 80, height: 24,
 			status: "branched 1a2b3c4d — ⏎ on it to open it"}
 		u.m.SetTrunk(map[string]bool{"s": true})
-		want := []string{"↑↓ move", "←→ fold", "⏎ continue here", "b branch", "s select", "m move", "p place", "L label", "a scope:this session", "f filter:all", "esc close"}
+		want := []string{"↑↓ move", "←→ fold", "⏎ continue here", "b branch", "s select", "m move", "p place", "L label", "a scope:this session", "f filter:all", "esc close", "u undo", "U redo"}
 		switch state {
 		case "all, human":
 			u.scopeAll = true

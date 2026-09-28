@@ -822,7 +822,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.m.Unfold()
 				u.offHand()
 				return u, nil
-			case "s", "p", "b", "m":
+			case "s", "p", "b", "m", "u", "U":
 				return u, nil
 			}
 		}
@@ -934,6 +934,21 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			u.confirm = confirmText(n, turns, entries, size, u.dstCWD(n))
 			u.pending, u.pendingBusy = branchCmd(u.a, u.st, n, sp, u.dstCWD(n)), "branching…"
+		case "u", "U":
+			// Swallowed mid-range, like b.
+			if u.m.RangeEnd != nil {
+				return u, nil
+			}
+			n := u.m.Selected()
+			if n == nil || n.Broken {
+				return u, nil
+			}
+			if msg.String() == "u" {
+				u.busy = "undoing…"
+				return u, undoCmd(u.st, n.SessionID, u.live)
+			}
+			u.busy = "redoing…"
+			return u, redoCmd(u.st, n.SessionID, u.live)
 		case "a":
 			u.scopeAll = !u.scopeAll
 			u.rebuild()
@@ -1014,7 +1029,7 @@ func (u uiModel) View() string {
 		scope = "all sessions"
 	}
 	// Every footer fits 80 columns; the normal one takes two lines.
-	footer := fmt.Sprintf("↑↓ move  ←→ fold  ⏎ continue here  b branch  s select  m move  p place a summary\nL label  a scope:%s  f filter:%s  esc close\n", scope, u.m.Filter)
+	footer := fmt.Sprintf("↑↓ move  ←→ fold  ⏎ continue here  b branch  s select  m move  p place a summary\nL label  a scope:%s  f filter:%s  u undo  U redo  esc close\n", scope, u.m.Filter)
 	if u.moving != nil {
 		footer = "↑↓ move to a turn  ⏎ put it after this turn  esc put it back\n"
 	} else if u.m.RangeEnd != nil {

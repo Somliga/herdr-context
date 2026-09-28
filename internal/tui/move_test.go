@@ -101,7 +101,7 @@ func TestPickingUpWithM(t *testing.T) {
 		t.Fatal("picking up wrote, paid for or asked something")
 	}
 	u = cursorTo(t, u, sidT, "t1-p") // m here would pick up t1
-	for _, k := range "spbm" {
+	for _, k := range "spbmuU" {
 		u = drive(t, u, key(k))
 		if u.moving == nil || u.moving.head.Node.ID != "t2-p" || u.m.RangeEnd != nil || u.picking != nil || u.busy != "" {
 			t.Fatalf("%c acted while moving: %q", k, u.status)

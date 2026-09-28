@@ -300,20 +300,6 @@ func (s *Store) CurrentOnDisk(sid string) (string, error) {
 	return onDisk.Current(sid), nil
 }
 
-// ReplacedOnDisk reports whether sessionID is replaced in the store as it is
-// on disk now, whatever this copy loaded: another overlay may have replaced
-// it since.
-func (s *Store) ReplacedOnDisk(sessionID string) (bool, error) {
-	if s.path == "" {
-		return false, ErrNoPath
-	}
-	onDisk, err := Load(s.RepoRoot)
-	if err != nil {
-		return false, err
-	}
-	return onDisk.Branches[sessionID].ReplacedBy != "", nil
-}
-
 // Versions lists sessionID and then every older version of its line, newest
 // first, following replaces through any number of splices.
 func (s *Store) Versions(sessionID string) []string {
