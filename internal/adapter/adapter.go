@@ -113,5 +113,5 @@ type Spliced struct {
 	SessionID string
 	Removed   int    // whole turns removed (a move: moved), not counting the preamble
 	After     string // the first entry after the edit, "" when nothing follows
-	First     string // a move: the first moved entry, under its new uuid
+	First     string // a move: the first moved entry, under its new uuid; a squash or merge: its seed
 }

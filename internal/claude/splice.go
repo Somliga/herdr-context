@@ -126,9 +126,9 @@ func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, err
 	}
 	joinTo := before
 	var seedLine []byte
+	var seedUUID string
 	if e.Seed != "" {
-		seedUUID, err := newUUIDv4()
-		if err != nil {
+		if seedUUID, err = newUUIDv4(); err != nil {
 			return adapter.Spliced{}, err
 		}
 		if seedLine, err = Marshal(seedEntry(e.Seed, seedUUID, before, sid, dstCWD)); err != nil {
@@ -186,7 +186,7 @@ func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, err
 	if removed < 0 {
 		removed = 0
 	}
-	return adapter.Spliced{SessionID: sid, Removed: removed, After: after}, nil
+	return adapter.Spliced{SessionID: sid, Removed: removed, After: after, First: seedUUID}, nil
 }
 
 // move is Splice for an Edit with Carry (§2.8): the one turn of Carry's

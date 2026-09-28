@@ -379,7 +379,7 @@ after the last boundary — the same line the tree shows.
 3. Store the summary (§2.6).
 4. Busy re-check (§6.1, step 3).
 5. Splice with the compaction seed, save (§5), reload the tree with the cursor
-   on the new line's tip. Nothing is opened (§6).
+   on the seed (§5.3f). Nothing is opened (§6).
 
 If the summary call fails, nothing is written or hidden.
 
@@ -498,8 +498,9 @@ off screen.
 A `⤶ squashed` or `⤶ merged from` row opens a turn (§3.1), so the tree draws
 it as a section head, like a prompt: at the section level after the turn it
 follows, never inside that turn's body. What the agent answers to it folds
-under it. After a merge or squash the cursor lands on that row without
-unfolding the turn before it.
+under it. After a merge or squash the cursor lands on that row — the seed,
+wherever in the line it is, not the line's tip — without unfolding the turn
+before it. `Splice` reports the seed's uuid (`Spliced.First`) for the reload.
 
 ### 5.4 Markers
 
@@ -527,7 +528,8 @@ An edit never opens or closes a pane. The handover happens when the user moves.
 2. (continue only) Summarise.
 3. **Re-check `agent_status` immediately before splicing.** If not `idle`:
    write nothing, status `summary stored — agent is <status>; select again or use p`.
-4. Splice, save the store, reload with the cursor on the new line's tip.
+4. Splice, save the store, reload with the cursor on the result: a squash's
+   or merge's seed (§5.3f), a moved turn, or else the new line's tip.
 
 A pane that was running the old line keeps running it. Anything typed there
 lands on the hidden line; the status says `⏎ on it to continue there`.

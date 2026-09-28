@@ -1683,3 +1683,28 @@ func TestScenarioAnEditBeforeANativeCompactIsStillRefused(t *testing.T) {
 		t.Fatal("a refused squash was paid for")
 	}
 }
+
+// After a squash or merge in the middle of a line the cursor lands on its
+// seed, not on the line's tip (§5.3f).
+func TestAMidLineSquashOrMergeLandsOnItsSeed(t *testing.T) {
+	for _, how := range []string{"squash", "merge"} {
+		t.Run(how, func(t *testing.T) {
+			w := newWorld(t)
+			w.trunk(sidT, "t1", "t2", "t3", "t4")
+			w.trunk(sidU, "u1", "u2")
+			u := allOf(w.open(sidT))
+			if how == "squash" {
+				u = selectRange(t, u, sidT, "t2-p", "t2-r", 0)
+				u = drive(t, u, enter, enter) // confirm, then commit the review
+			} else {
+				u = selectRange(t, u, sidU, "u1-p", "u1-r", 0)
+				u = drive(t, u, enter, enter)
+				u = drive(t, cursorTo(t, u, sidT, "t2-r"), key('p'), enter, enter, enter) // pick, merge here, confirm
+			}
+			n := u.m.Selected()
+			if n == nil || n.SessionID != w.replacement(sidT) || !strings.HasPrefix(n.Node.Title, "⤶") {
+				t.Fatalf("cursor on %+v, want the seed (status %q)", n, u.status)
+			}
+		})
+	}
+}
