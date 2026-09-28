@@ -40,8 +40,10 @@ behaviour is in `README.md`.
 Key files and functions:
 
 - `internal/claude/graft.go` — `Select` (the ancestor chain kept by a graft), `Graft`, `GraftSeeded`, `writeSession` (0600 atomic), `checkVersion` (2.1 only).
-- `internal/claude/line.go` — `buildLine`: a session's current line split into turns; `ErrNotOnLine`.
-- `internal/claude/splice.go` — `Widen` (a range to whole turns), `Splice` (squash / drop / merge / move in one operation; cross-line moves renew ids).
+- `internal/claude/line.go` — `buildLine`: a session's current line split into turns; `tipReaching`; `ErrNotOnLine`.
+- `internal/claude/splice.go` — `Widen` (a range to whole turns),
+  `WidenBranch` (one turn for ⏎/`b`/branch here, on the line it is on even
+  off the current one), `Splice` (squash / drop / merge / move in one operation; cross-line moves renew ids).
 - `internal/claude/entries.go` — `Classify`, `Entries`, `SummaryPrefix` / `CompactionPrefix`, the `<pasted_content>` unwrap.
 - `internal/claude/summarise.go` — `CompactPrompt`, `Summarise` (`claude -p --resume` on a throwaway graft, timeout, stderr scrubbed).
 - `internal/claude/discover.go` — `Discover`, `ProjectsDir` (`CLAUDE_PROJECTS_DIR` overrides).

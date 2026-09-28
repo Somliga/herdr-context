@@ -16,8 +16,15 @@ obvious from it.
 - **A splice keeps uuids; a cross-line move renews uuids, requestIds,
   `message.id` and tool_use ids consistently within the moved turn.** Why: the
   target may hold copies with the same ids, and a repeated requestId or message
-  id mis-assigns turns. A same-line move keeps every id so branches and labels
-  still resolve. Cost: nothing — ids are opaque.
+  id mis-assigns turns. Every block whose type ends in `tool_use`
+  (`server_tool_use`, `mcp_tool_use` too) is renewed, and `renamed` rewrites
+  whatever names it, `*_tool_result` blocks included. A same-line move keeps
+  every id so branches and labels still resolve. Cost: nothing — ids are
+  opaque.
+- **What renewing costs a cross-line move, accepted:** the moved turn's label
+  stays behind, and a branch off it re-attaches as `from a removed stretch`.
+  Moving one of a branch's copied turns into that branch gives it the turn
+  twice — the user's choice, nothing lost.
 - **Inherited dangling tool_uses are not an error.** An interrupted session's
   tip is an unanswered tool_use; a seed after it is what typing into the
   resumed session produces. `splicecheck` counts them separately. Cost: a
@@ -79,6 +86,15 @@ obvious from it.
   parent). Why: pure, screen-exact, never lands on an invisible node.
 
 ## TUI flow
+
+- **After an edit the cursor lands on its result:** a squash's or merge's
+  seed (`Spliced.First`), a moved turn, else the new tip. `b` lands on the
+  new branch without unfolding the turn it came from: `reveal` stops at the
+  first cross-session step, since a folded turn shows its body's branches.
+- **Every footer fits 80 columns;** the normal one takes two lines and the
+  row budget counts them.
+- **A move's drop that is written but not recorded says so** ("written but
+  not recorded"), not "not dropped": the file exists.
 
 - **The range menu is `squash · drop`. `squash into…` was built and then
   removed** at the user's call: squash then move does the same with less
@@ -154,7 +170,6 @@ obvious from it.
   move on them are refused; consider marking them.
 - `parseTitle` takes a first line like `state: …` followed by a blank line as
   the title if the model skips the title.
-- `server_tool_use` / `mcp_tool_use` ids are not renewed on a cross-line move.
 - `✂ 1 turns dropped` wording.
 - A drop marker whose anchor is later dropped or squashed falls back to the
   last row.

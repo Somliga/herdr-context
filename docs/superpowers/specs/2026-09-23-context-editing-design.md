@@ -1,12 +1,13 @@
 # herdr-tree — context editing
 
 Date: 2026-09-23
-Status: current and binding, as amended through 2026-09-28. Implemented at
-d7718fb (`feat/timeline-v2`). Where the text below and the code differ, the
-code is authoritative. In short, what is current:
+Status: current and binding, as amended through 2026-09-28. Implemented on
+`feat/timeline-v2`, including the second whole-branch review's fixes. Where
+the text below and the code differ, the code is authoritative. In short, what is current:
 
 - The range menu is `squash · drop`. **squash into… is removed** (§0 note):
-  §2.7 and every mention of it no longer bind.
+  §2.7 is kept only as a marker, and every other mention of it has been taken
+  out of the text.
 - **move is one section** (`m`, §2.8); to move a stretch, squash it first.
 - ⏎ continues here, `b` branches (§2.5c); **no edit opens a pane**, ⏎ moves
   you and hands over a replaced line's pane (§6.2).
@@ -19,6 +20,10 @@ code is authoritative. In short, what is current:
 - §6.1 and §5.4 now match the code: the busy guard is an allowlist (only
   `idle`, or no agent, is safe) and names the status; the drop marker reads
   `✂ N turns dropped before this` / `after this`.
+- ⏎, `b` and branch here work from any turn with a row, including one before
+  a native `/compact` (§2.5b); edits still need the current line (§3.3).
+- A move within the line leaves no marker; a mid-line squash or merge lands
+  the cursor on its seed (§2.8, §5.3f).
 - Decisions and deferred minors: `docs/DECISIONS.md`.
 
 Earlier status: approved; amended 2026-09-23 after the first manual run (§2.2,
@@ -40,8 +45,8 @@ another base.
 > another line, squash it, then move (§2.8) the `⤶` row there. A `⤶ squashed`
 > row moved into another line is relabelled `⤶ merged from <source8>` (§2.8).
 > The report-style summary prompt goes with it; every squash uses the handover
-> prompt. §2.7 and every mention of squash into… below describe the removed
-> operation and no longer bind.
+> prompt. §2.7 is kept only as a marker of the removed operation; the other
+> passages that described it were amended in place.
 
 ## 1. The model
 
@@ -96,9 +101,6 @@ squash · drop · esc back
 
 - **squash** — the range is replaced by its summary in its own
   line (a compaction).
-- **squash into…** — a move: the user chooses where the summary goes, then
-  confirms once; only then is the range summarised, merged there, and dropped
-  from its own line (§2.7).
 - **drop** — the range is removed.
 
 **No edit opens a pane.** Every edit only writes; the tree reloads with the
@@ -114,10 +116,6 @@ or stops at the first failure (§6).
   to the end of the range … that whole prefix is billed"), then:
   `Then: turns <a>–<b> are replaced by the summary · a new session replaces
   this line in the tree (the old one is hidden, kept on disk)`.
-- **squash into…**: no dialog when chosen — nothing is paid or written yet; the
-  target is chosen first (§2.7), and the one confirmation comes after it: the
-  same cost text, then `Then: the summary is merged into <target> · turns
-  <a>–<b> are dropped from <source8>` (or `…branched at <target>…`).
 - **drop**: `Removes turns <a>–<b>. Costs nothing. No note is left in the
   conversation.` plus the same replacement line.
 
@@ -130,10 +128,7 @@ Each refusal is a status line with its reason. The range stays fixed so it can
 be adjusted.
 
 - The range crosses sessions (v2, unchanged).
-- The session's live agent is busy (§6.1). For squash into… this is checked
-  when the summary is placed, since that is when the source is written.
-- A squash into… whose range covers every turn of its line (it would leave
-  nothing); checked when squash into… is chosen, before anything is paid for.
+- The session's live agent is busy (§6.1).
 - A drop would remove every turn.
 - The range is not on the chain up to the session's tip (§3.3).
 
@@ -159,12 +154,21 @@ merge, and `s` → drop covers it.
 
 ### 2.5b Branching starts after the whole turn
 
-`⏎` on any row of a turn that is not the line's tip, and **branch here**
-(from `p` or squash into…), graft at the **last entry of that turn** — the
+`⏎` on any row of a turn that is not the line's tip, `b`, and **branch here**
+(from `p`), graft at the **last entry of that turn** — the
 same whole-turn rule as §3.1 — not at the row's own entry. Grafting at a
 prompt would leave it unanswered, so the resumed agent answers it again, and
 a seed placed after it would make two user messages in a row. `⏎` on a line's
 tip still resumes it unchanged.
+
+> **Amended 2026-09-28:** a branch works from any turn that has a row, not
+> only from the session's current line. A turn before a native `/compact`
+> (§3.4), or on a stretch the session rewound away from, is widened on the
+> line it is on: the one ending at the latest entry, in file order, whose
+> ancestor chain holds it (`WidenBranch`). The graft then carries that
+> history up to the end of the turn. Only if no such line exists is the graft
+> at the row's own entry. Squash, drop and move still refuse such a turn
+> (§3.3): they rewrite the current line, which does not hold it.
 
 ### 2.5c `⏎` continues, `b` branches
 
@@ -176,7 +180,8 @@ tip still resumes it unchanged.
   (§2.5b), opens nothing, asks nothing: the tree reloads with the cursor on
   the new branch, status `branched <new8> — ⏎ on it to open it`. On a tip it
   makes a branch with nothing of its own yet (one row, §5.3b). Swallowed while
-  a range, a menu, a confirmation or squash into…'s target mode is active.
+  a range, a menu, a confirmation or a move is active. The turn it came from
+  is not unfolded: a folded turn shows the branches off its body.
 - The footer reads `⏎ continue here · b branch · …`.
 
 ### 2.5d A delivered summary is still recognised
@@ -191,40 +196,22 @@ opener) and its row title is the `⤶` line. Any other paste is untouched.
 
 ### 2.6 The summary is still stored
 
-Both summarise options store the summary exactly as v2 does, so `p` can merge
-the same summary into another line later.
+A squash stores its summary exactly as v2 does, so `p` can merge the same
+summary into another line later.
 
-### 2.7 squash into… — choose the target, then pay
+### 2.7 squash into… — removed
 
-Choosing **squash into…** puts the overlay in target mode — nothing is paid
-or written yet. Status `move to a turn and press ⏎ to squash turns <a>–<b>
-into it · esc cancels`.
-
-- `⏎` on a turn in another line does what `p` does for a stored summary
-  (§2.5): the live tip takes it as a message, anywhere else the merge/branch
-  menu. Then ONE confirmation: the cost text (Preview of the source at the
-  range's end, "…billed"), then `Then: the summary is merged into <target8> ·
-  turns <a>–<b> are dropped from <source8>` (branch: `…a new line branches at
-  <target8>…`; live tip: `…sent to <agent> as your next message…`).
-- Merging into the source line itself is refused (`merge into another line —
-  use squash for this one`); stays in target mode.
-- `esc` in target mode, the place menu or the confirmation cancels the move.
-  Nothing was paid, nothing written.
-- On confirm, in order, each step only if the one before succeeded:
-  1. the source's agent is checked (§6.1); busy → nothing paid, nothing written;
-  2. summarise (billed) and store the summary (so `p` can reuse it);
-  3. write the squash at the target (message, merge or branch);
-  4. re-check the source and drop the range from it (a `drop`, §5.1, `✂`).
-  If the summary fails, nothing is written. If step 3 fails, nothing is
-  dropped. If step 4 fails, the status says `squashed into <x>, but the source
-  was not dropped: <err>` — a copy, nothing lost.
+**Removed 2026-09-28** (§0 note). It chose a target in another line, then
+summarised the range, merged it there and dropped it from its own line. The
+same is done now with less machinery: squash the range, then move (§2.8) its
+`⤶` row into the other line. Its text is no longer part of this spec.
 
 ### 2.8 move — carry turns verbatim
 
 **Picking up.** `m` on a turn picks up that one section (its prompt, or its
 `⤶` row, and everything under it). There is no range move: to move a stretch,
 squash it first (one `⤶` section), then move that. The range menu stays
-`squash · squash into… · drop`. Status `moving 1 turn — ⏎ puts it here · esc
+`squash · drop`. Status `moving 1 turn — ⏎ puts it here · esc
 puts it back`.
 
 **Moving.** The picked-up turn is drawn as a dimmed `⇢ …` block directly
@@ -268,25 +255,35 @@ branches and labels on the moved turn keep resolving. A **cross-line** move
 rewrites, consistently within the moved turn, its uuids, requestIds,
 `message.id`s and tool_use ids (each `tool_result`'s `tool_use_id` with them):
 the target may hold copies carrying the same ids, and a repeated requestId or
-message id would merge or mis-assign turns.
+message id would merge or mis-assign turns. Every tool call block's id is
+renewed — `tool_use`, `server_tool_use`, `mcp_tool_use`, any `*_tool_use` —
+with every `*_tool_result` that names it.
+
+What follows from renewing ids, and is accepted: the moved turn's label (set
+under its old uuid) does not follow it into the other line, and a branch that
+hung off it re-attaches as `from a removed stretch`. Moving one of a branch's
+copied turns (§5.3b) into that branch gives the branch the turn twice — the
+user's choice; nothing is lost.
 
 ### 2.9 Watch it summarise, read it before it lands
 
-For **squash** and **squash into…**, after the confirmation:
+For a **squash**, after the confirmation:
 
 - **Summarising view.** The overlay shows what is running: `Summarising
   turns <a>–<b> of <id8>`, the Preview figures (`the model is reading <t>
   turns · <e> entries · <size>`), a spinner and the elapsed time, ticking every
-  second, and `ctrl+c leaves (the call is already billed)`.
+  second, and `ctrl+c leaves (the call is already billed)`. The first ctrl+c
+  only warns (`this call is already billed; ctrl+c again to leave it
+  running`); the second leaves.
 - **Review view.** When the summary arrives it is stored (§2.6) and shown in
   full in a scrollable box, headed `Squash turns <a>–<b> — review the
-  summary`, with the `Then:` line of the operation below it (replaced here /
-  merged into / branch at / sent to). `↑↓` scroll, `⏎` commits — the rest of
-  the operation runs exactly as before (busy and changed-elsewhere checks,
-  then the splice, or the landing then the drop) — and `esc` cancels: nothing
-  is written to any conversation; the summary stays stored for `p`.
-- A summary failure shows its error in the summarising view's place and
-  writes nothing, as today.
+  summary`, with the `Then:` line of the confirmation below it. `↑↓` scroll,
+  `⏎` commits — the rest of the squash runs exactly as before (busy and
+  changed-elsewhere checks, then the splice) — and `esc` cancels: nothing is
+  written to any conversation; the summary stays stored for `p`.
+- A summary failure clears the summarising view: the tree comes back with the
+  error on its status line (`summarise failed: <err> — nothing was written`).
+  Nothing is written.
 
 The summary is shown only in this view — never in a status line.
 
@@ -372,7 +369,8 @@ applies.
 
 Claude Code's own `/compact` writes a `compact_boundary` where the parent chain
 restarts. Splice follows `parentUuid` as graft does, so it sees only the line
-after the last boundary — the same line the tree shows.
+after the last boundary. The tree also shows the turns before it; a branch
+can start from one of them (§2.5b), an edit cannot.
 
 ## 4. Squash, end to end
 
@@ -384,10 +382,6 @@ after the last boundary — the same line the tree shows.
    on the seed (§5.3f). Nothing is opened (§6).
 
 If the summary call fails, nothing is written or hidden.
-
-squash into… chooses its target before anything is paid (§2.7); its
-confirmation then runs the busy check, the summary, the squash at the target,
-and the drop from the source, in that order.
 
 ## 5. Store and tree
 
@@ -542,8 +536,8 @@ lands on the hidden line; the status says `⏎ on it to continue there`.
 times without moving) for a session still open in a pane.
 
 - None found: plain resume, as today.
-- Found, and its agent is `working`: refused — closing it would kill the
-  running turn.
+- Found, and its agent is anything but `idle` (§6.1): refused — closing it
+  could kill a running turn.
 - Found: confirm `Check out the new line. The pane running the old line is
   closed; text typed but not sent there is lost.` Then open the new session
   **with focus**, and close the old pane only if the open succeeded. If the

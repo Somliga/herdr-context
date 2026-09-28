@@ -78,8 +78,9 @@ Select a range with `s`, press ⏎, choose **squash**.
 1. **Confirm.** The dialog names the turns (widened to whole turns) and the
    cost: the model reads the session up to the end of the range, and that
    whole prefix is billed.
-2. **Summarising view.** Spinner and elapsed time. `ctrl+c` leaves, but the
-   call is already billed.
+2. **Summarising view.** Spinner and elapsed time. The first `ctrl+c` only
+   warns that the call is already billed; a second one leaves it running and
+   closes the overlay.
 3. **Review.** The summary is shown in full, with its title above it and what
    will happen below it. `⏎` commits; `esc` cancels — nothing is written, and
    the summary stays stored for `p`.
@@ -97,6 +98,8 @@ conversation.
 To move a stretch, squash it first, then move the `⤶` row. ⏎ puts it after the
 turn under the cursor, in the same line or another one. Moved into another
 line, a `⤶ squashed` row becomes `⤶ merged from <source>`. Nothing is billed.
+A turn moved into another line gets new ids there, so its label stays behind
+and a branch that hung off it shows as `from a removed stretch`.
 
 ## Place a summary (`p`)
 
