@@ -510,6 +510,31 @@ func TestScenarioBranchOfABranch(t *testing.T) {
 	checkLines(t, u, sidT, b, c)
 }
 
+// §3.1/§3.2 end-to-end: a real transcript whose last reply carries
+// real-shaped usage produces a header context number through Discover ->
+// Build -> headerLine, not by setting Node fields directly (that unit test
+// is TestHeaderShowsTheContextNumber in view_test.go).
+func TestScenarioHeaderShowsTheLinesRealContextSize(t *testing.T) {
+	w := newWorld(t)
+	dir := filepath.Join(w.proj, claude.SlugFor(w.repo))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pre := map[string]any{"type": "attachment", "uuid": sidT[:4] + "-pre", "parentUuid": nil, "sessionId": sidT,
+		"cwd": w.repo, "version": "2.1.278", "timestamp": w.tick(), "attachment": map[string]any{"kind": "reminder"}}
+	lines := w.turnLines(sidT, "t1", sidT[:4]+"-pre")
+	reply := lines[len(lines)-1]["message"].(map[string]any)
+	reply["usage"] = map[string]any{
+		"input_tokens": 210, "cache_read_input_tokens": 84000, "cache_creation_input_tokens": 0, "output_tokens": 12,
+	}
+	w.appendLines(filepath.Join(dir, sidT+".jsonl"), append([]map[string]any{pre}, lines...))
+
+	u := allOf(w.open(sidT))
+	if !strings.Contains(shown(u), shortID(sidT)+" · 84k") {
+		t.Fatalf("header does not carry the context number:\n%s", shown(u))
+	}
+}
+
 // A2. ⏎ on a folded head row grafts after the WHOLE turn it belongs to
 // (§2.5b), not at the prompt itself: branching on t2's PROMPT row must land
 // exactly where branching on its REPLY row would — right under t2-r, with

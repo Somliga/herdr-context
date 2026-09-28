@@ -153,6 +153,32 @@ func TestUndoAMoveUndoesBothLines(t *testing.T) {
 	}
 }
 
+// A cross-line move's undo restores both lines whichever line the cursor is
+// on: mirrors TestUndoAMoveUndoesBothLines, undoing from the SOURCE line
+// (sidT, unmoved) instead of the target.
+func TestUndoAMoveFromTheSourceLineUndoesBothLines(t *testing.T) {
+	w := undoWorld(t)
+	u, t1, u1 := moveTtoU(t, w)
+
+	u = drive(t, cursorTo(t, u, t1, "t1-p"), key('u'))
+	if want := "undone move on " + shortID(sidT) + continueThere; u.status != want {
+		t.Fatalf("status %q, want %q", u.status, want)
+	}
+	checkLines(t, u, sidT, sidU)
+	if rowText(u, sidT, "t2-p") == "" || strings.Count(shown(u), "prompt t2") != 1 {
+		t.Errorf("t2 is not back where it was, once:\n%s", shown(u))
+	}
+
+	u = drive(t, cursorTo(t, u, sidU, "u2-p"), key('U'))
+	if !strings.HasPrefix(u.status, "redone move on ") {
+		t.Fatalf("status %q", u.status)
+	}
+	checkLines(t, u, t1, u1)
+	if !strings.Contains(shown(u), "⇠ moved from "+shortID(t1)) || strings.Count(shown(u), "prompt t2") != 1 {
+		t.Errorf("t2 is not moved again, once:\n%s", shown(u))
+	}
+}
+
 func TestUndoAMoveIsRefusedIfTheOtherLineWasEditedSince(t *testing.T) {
 	w := undoWorld(t)
 	u, t1, u1 := moveTtoU(t, w)
