@@ -609,8 +609,11 @@ func (m *Model) reveal(n *tree.Node) {
 		return
 	}
 	// Rows() lets a folded node hide only its own session's body entries.
-	for c, p := n, m.parent[n]; p != nil; c, p = p, m.parent[p] {
-		if c.SessionID == p.SessionID && !c.IsHead {
+	// The walk stops where n's session hangs off another: a folded turn
+	// shows the branches off its body already (bodyGrafts), so the turn a
+	// branch came from stays folded.
+	for c, p := n, m.parent[n]; p != nil && c.SessionID == p.SessionID; c, p = p, m.parent[p] {
+		if !c.IsHead {
 			delete(m.Folded, p)
 		}
 	}

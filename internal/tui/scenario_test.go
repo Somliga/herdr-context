@@ -1708,3 +1708,21 @@ func TestAMidLineSquashOrMergeLandsOnItsSeed(t *testing.T) {
 		})
 	}
 }
+
+// b lands the cursor on the new branch without unfolding the turn it came
+// from: a folded turn shows the branches off its body already (bodyGrafts).
+func TestBLeavesTheParentsTurnFolded(t *testing.T) {
+	w := newWorld(t)
+	w.durations = true
+	w.trunk(sidT, "NUGGET", "TRIPPLEDIP", "BULLDOG")
+	u := drive(t, cursorTo(t, w.open(sidT), sidT, "TRIPPLEDIP-p"), key('b'))
+	br := w.branchOff(sidT)
+	if n := u.m.Selected(); n == nil || n.SessionID != br {
+		t.Fatalf("cursor on %+v, want the branch (status %q)", n, u.status)
+	}
+	for _, r := range u.m.Rows() {
+		if r.Node.SessionID == sidT && r.Node.Node.ID == "TRIPPLEDIP-p" && !u.m.Folded[r.Node] {
+			t.Fatalf("b unfolded the turn the branch came from:\n%s", strings.Join(screen(u), "\n"))
+		}
+	}
+}
