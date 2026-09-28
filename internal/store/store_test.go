@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -407,5 +408,110 @@ func TestVersionsWalksReplacesNewestFirstAndStopsOnACycle(t *testing.T) {
 	s.Branches["a"] = Branch{Replaces: "c"} // hand-edited cycle
 	if got := strings.Join(s.Versions("c"), " "); got != "c b a" {
 		t.Fatalf("versions %q on a cycle, want c b a", got)
+	}
+}
+
+func TestCurrentSkipsUndoneReplacements(t *testing.T) {
+	s := &Store{Branches: map[string]Branch{}}
+	s.Replace("a", "b", Branch{Kind: KindCompacted})
+	s.Replace("b", "c", Branch{Kind: KindCut})
+	if got := s.Current("a"); got != "c" {
+		t.Fatalf("Current(a) = %q, want c", got)
+	}
+	c := s.Branches["c"]
+	c.Undone = true
+	s.Branches["c"] = c
+	if got := s.Current("a"); got != "b" {
+		t.Fatalf("with c undone, Current(a) = %q, want b", got)
+	}
+	if got := s.Current("c"); got != "b" {
+		t.Fatalf("an undone version resolves back to the current one: Current(c) = %q, want b", got)
+	}
+	b := s.Branches["b"]
+	b.Undone = true
+	s.Branches["b"] = b
+	if got := s.Current("c"); got != "a" {
+		t.Fatalf("two undone: Current(c) = %q, want a", got)
+	}
+}
+
+func TestANewEditAfterUndoReplacesTheCurrentVersion(t *testing.T) {
+	s := &Store{Branches: map[string]Branch{}}
+	s.Replace("a", "b", Branch{Kind: KindCompacted})
+	b := s.Branches["b"]
+	b.Undone = true
+	s.Branches["b"] = b
+	s.Replace("a", "d", Branch{Kind: KindCut})
+	if got := s.Current("a"); got != "d" {
+		t.Fatalf("Current(a) = %q, want d", got)
+	}
+	if got := s.Current("b"); got != "d" {
+		t.Fatalf("the abandoned undone version resolves to the line's current: %q, want d", got)
+	}
+}
+
+func TestLineageListsEveryVersionOfTheLine(t *testing.T) {
+	s := &Store{Branches: map[string]Branch{}}
+	s.Replace("a", "b", Branch{})
+	s.Replace("b", "c", Branch{})
+	c := s.Branches["c"]
+	c.Undone = true
+	s.Branches["c"] = c
+	got := s.Lineage("b")
+	sort.Strings(got)
+	if strings.Join(got, ",") != "a,b,c" {
+		t.Fatalf("Lineage(b) = %v, want a,b,c", got)
+	}
+}
+
+func TestGroupFindsTheOtherHalfOfAMove(t *testing.T) {
+	s := &Store{Branches: map[string]Branch{
+		"t2": {Edit: "e1"}, "s2": {Edit: "e1"}, "x": {Edit: "e2"}, "y": {},
+	}}
+	if g := s.Group("t2"); strings.Join(g, ",") != "s2,t2" {
+		t.Fatalf("Group(t2) = %v, want s2,t2", g)
+	}
+	if g := s.Group("y"); strings.Join(g, ",") != "y" {
+		t.Fatalf("Group(y) = %v, want y", g)
+	}
+}
+
+func TestSaveMergesUndoneByTheLaterToggle(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
+	s1, _ := Load("/repo")
+	s1.Replace("a", "b", Branch{})
+	if err := s1.Save(); err != nil {
+		t.Fatal(err)
+	}
+	s2, _ := Load("/repo")
+	b := s1.Branches["b"]
+	b.Undone, b.UndoneAt = true, time.Now().UTC()
+	s1.Branches["b"] = b
+	if err := s1.Save(); err != nil {
+		t.Fatal(err)
+	}
+	s2.SetLabel("a", "t1", "x") // an unrelated save from a stale overlay
+	if err := s2.Save(); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := Load("/repo")
+	if !after.Branches["b"].Undone {
+		t.Fatal("a stale save cleared an undo")
+	}
+}
+
+func TestCurrentOnDiskSeesAnotherOverlaysUndo(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", t.TempDir())
+	s1, _ := Load("/repo")
+	s1.Replace("a", "b", Branch{})
+	_ = s1.Save()
+	s2, _ := Load("/repo")
+	b := s2.Branches["b"]
+	b.Undone, b.UndoneAt = true, time.Now().UTC()
+	s2.Branches["b"] = b
+	_ = s2.Save()
+	got, err := s1.CurrentOnDisk("a")
+	if err != nil || got != "a" {
+		t.Fatalf("CurrentOnDisk(a) = %q, %v; want a", got, err)
 	}
 }

@@ -37,6 +37,14 @@ type Branch struct {
 	Cut        *Cut   `json:"cut,omitempty"`
 	// MovedFrom, on the line turns were moved into, is where they came from.
 	MovedFrom *Moved `json:"moved_from,omitempty"`
+
+	// Undo sets Undone on the version it takes back; the version it replaced
+	// is current again. UndoneAt is the last time Undone was toggled (undo or
+	// redo), for merging. Edit groups the records one edit wrote (a
+	// cross-line move writes two).
+	Undone   bool      `json:"undone,omitempty"`
+	UndoneAt time.Time `json:"undone_at,omitempty"`
+	Edit     string    `json:"edit,omitempty"`
 }
 
 // Moved names the first moved entry in the target and the session the turns
@@ -226,19 +234,74 @@ func (s *Store) Replace(oldSID, newSID string, b Branch) {
 	s.Add(newSID, b)
 }
 
-// Resolve follows replaced_by from sessionID to the line that now stands in
-// its place, through any number of splices.
-func (s *Store) Resolve(sessionID string) string {
+// Resolve is a thin alias for Current, kept for callers until Task 2
+// migrates them.
+func (s *Store) Resolve(sessionID string) string { return s.Current(sessionID) }
+
+// Current is the version of sid's line that is shown: follow replaced_by
+// forward through versions that are not undone; from an undone version,
+// first step back through replaces to one that is not.
+func (s *Store) Current(sid string) string {
 	seen := map[string]bool{}
-	for !seen[sessionID] {
-		seen[sessionID] = true
-		next := s.Branches[sessionID].ReplacedBy
-		if next == "" {
-			return sessionID
+	for s.Branches[sid].Undone && !seen[sid] {
+		seen[sid] = true
+		prev := s.Branches[sid].Replaces
+		if prev == "" {
+			return sid // an undone record with nothing before it: shown as is
 		}
-		sessionID = next
+		sid = prev
 	}
-	return sessionID // a cycle in a hand-edited store: stop where it closed
+	seen = map[string]bool{}
+	for !seen[sid] {
+		seen[sid] = true
+		next := s.Branches[sid].ReplacedBy
+		if next == "" || s.Branches[next].Undone {
+			return sid
+		}
+		sid = next
+	}
+	return sid // a cycle in a hand-edited store: stop where it closed
+}
+
+// Lineage is every session whose Current is sid, sid included, sorted.
+func (s *Store) Lineage(sid string) []string {
+	out := []string{sid}
+	for id := range s.Branches {
+		if id != sid && s.Current(id) == sid {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Group is sid and every record that shares its Edit, sorted.
+func (s *Store) Group(sid string) []string {
+	e := s.Branches[sid].Edit
+	if e == "" {
+		return []string{sid}
+	}
+	var out []string
+	for id, b := range s.Branches {
+		if b.Edit == e {
+			out = append(out, id)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// CurrentOnDisk is Current as the store on disk has it, for the
+// changed-in-another-overlay check.
+func (s *Store) CurrentOnDisk(sid string) (string, error) {
+	if s.path == "" {
+		return "", ErrNoPath
+	}
+	onDisk, err := Load(s.RepoRoot)
+	if err != nil {
+		return "", err
+	}
+	return onDisk.Current(sid), nil
 }
 
 // ReplacedOnDisk reports whether sessionID is replaced in the store as it is
@@ -297,6 +360,12 @@ func (s *Store) Save() error {
 			// clear it by saving something unrelated.
 			if ours.ReplacedBy == "" && b.ReplacedBy != "" {
 				ours.ReplacedBy = b.ReplacedBy
+				s.Branches[id] = ours
+			}
+			// Undone toggles both ways: the later toggle wins.
+			ours = s.Branches[id]
+			if b.UndoneAt.After(ours.UndoneAt) {
+				ours.Undone, ours.UndoneAt = b.Undone, b.UndoneAt
 				s.Branches[id] = ours
 			}
 		}
