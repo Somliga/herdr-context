@@ -109,63 +109,6 @@ func TestEscInTheReviewWritesNothingAndKeepsTheSummary(t *testing.T) {
 	}
 }
 
-// Each landing of squash into…, up to its confirmation.
-var landings = []struct {
-	name string
-	to   func(*testing.T, uiModel, *fakeAdapter) uiModel
-	then string
-	want string
-}{
-	{"merge", func(t *testing.T, u uiModel, _ *fakeAdapter) uiModel {
-		u, _ = press(t, at(t, u, "o1"), enter, enter)
-		return u
-	}, "Then: the summary is merged into o · turns 2–3 are dropped from s", "summarise s,splice o,splice s"},
-	{"branch", func(t *testing.T, u uiModel, _ *fakeAdapter) uiModel {
-		u, _ = press(t, at(t, u, "o1"), enter, down, enter)
-		return u
-	}, "Then: a new line branches at o, carrying the summary · turns 2–3 are dropped from s", "summarise s,graft o,splice s"},
-	{"live tip", func(t *testing.T, u uiModel, fa *fakeAdapter) uiModel {
-		u.current, u.liveAgent = "o", "agent-1"
-		u.send = func(agent, _ string) error {
-			fa.writes = append(fa.writes, "send "+agent)
-			return nil
-		}
-		u, _ = press(t, at(t, u, "o2"), enter)
-		return u
-	}, "Then: the summary is sent to agent-1 as your next message · turns 2–3 are dropped from s", "summarise s,send agent-1,splice s"},
-}
-
-func TestSquashIntoIsReviewedBeforeItLandsAndDrops(t *testing.T) {
-	for _, l := range landings {
-		fa := &fakeAdapter{}
-		u := l.to(t, moveUI(t, fa, &herdrLog{}), fa)
-		u, cmd := press(t, u, enter)
-		u = review(t, u, cmd)
-		if v := flat(u.View()); !strings.Contains(v, "it went well") || !strings.Contains(v, l.then) {
-			t.Fatalf("%s: the review lacks the summary or %q:\n%s", l.name, l.then, v)
-		}
-		if got := strings.Join(fa.writes, ","); got != "summarise s" {
-			t.Fatalf("%s: writes %s before ⏎", l.name, got)
-		}
-		u, cmd = press(t, u, enter)
-		cmd()
-		if got := strings.Join(fa.writes, ","); got != l.want {
-			t.Fatalf("%s: writes %s, want %s", l.name, got, l.want)
-		}
-
-		fa = &fakeAdapter{}
-		u = l.to(t, moveUI(t, fa, &herdrLog{}), fa)
-		u, cmd = press(t, u, enter)
-		u, cmd = press(t, review(t, u, cmd), esc)
-		if cmd != nil {
-			cmd()
-		}
-		if got := strings.Join(fa.writes, ","); got != "summarise s" || len(u.st.AllSummaries()) != 1 || u.folding != nil {
-			t.Fatalf("%s: esc wrote %s or lost the summary", l.name, got)
-		}
-	}
-}
-
 func TestTheSummarisingViewTicksUntilTheSummaryArrives(t *testing.T) {
 	fa := &fakeAdapter{summary: "it went well"}
 	u, cmd := squashed(t, fa, &herdrLog{})
@@ -323,7 +266,7 @@ func TestAResizeWhileScrolledKeepsTheReviewOnTheSummary(t *testing.T) {
 }
 
 // However the parts wrap, the review fits the terminal and its header is on
-// the first row — for a squash and for squash into…'s longer Then: line.
+// the first row.
 func TestTheReviewFitsTheScreen(t *testing.T) {
 	var long []string
 	for i := 1; i <= 60; i++ {
@@ -334,21 +277,14 @@ func TestTheReviewFitsTheScreen(t *testing.T) {
 			fa := &fakeAdapter{summary: summary}
 			u, cmd := squashed(t, fa, &herdrLog{})
 			u.width, u.height = size[0], size[1]
-			sq := review(t, u, cmd)
-			fa = &fakeAdapter{summary: summary}
-			u, _ = press(t, at(t, moveUI(t, fa, &herdrLog{}), "o1"), enter, down, enter)
-			u.width, u.height = size[0], size[1]
-			u, cmd = press(t, u, enter)
-			mv := review(t, u, cmd)
-			for _, r := range []uiModel{sq, mv} {
-				rows := rowsOf(r.View())
-				if len(rows) > size[1] || !strings.HasPrefix(rows[0], "Squash turns 2–3 — review the summary") {
-					t.Fatalf("%dx%d: %d rows, first %q:\n%s", size[0], size[1], len(rows), rows[0], r.View())
-				}
-				for _, row := range rows {
-					if w := lipgloss.Width(row); w > size[0] {
-						t.Fatalf("%dx%d: a row %d wide: %q", size[0], size[1], w, row)
-					}
+			r := review(t, u, cmd)
+			rows := rowsOf(r.View())
+			if len(rows) > size[1] || !strings.HasPrefix(rows[0], "Squash turns 2–3 — review the summary") {
+				t.Fatalf("%dx%d: %d rows, first %q:\n%s", size[0], size[1], len(rows), rows[0], r.View())
+			}
+			for _, row := range rows {
+				if w := lipgloss.Width(row); w > size[0] {
+					t.Fatalf("%dx%d: a row %d wide: %q", size[0], size[1], w, row)
 				}
 			}
 		}

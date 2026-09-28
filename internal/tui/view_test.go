@@ -81,7 +81,6 @@ type fakeAdapter struct {
 	seedErr      error
 
 	summarisedFrom, summarisedTo string
-	summarisedCompact            bool
 	seededWith                   string
 	branchedAt                   string // the node id Branch/BranchSeeded was called with
 	resumed                      string
@@ -123,10 +122,9 @@ func (f *fakeAdapter) Resume(sessionID, _ string, focus bool) error {
 	f.resumed, f.focused = sessionID, focus
 	return f.resumeErr
 }
-func (f *fakeAdapter) Summarise(src adapter.Session, fromTurn, toTurn string, compact bool) (string, error) {
+func (f *fakeAdapter) Summarise(src adapter.Session, fromTurn, toTurn string) (string, error) {
 	f.writes = append(f.writes, "summarise "+src.ID)
 	f.summarisedFrom, f.summarisedTo = fromTurn, toTurn
-	f.summarisedCompact = compact
 	if f.summariseErr != nil {
 		return "", f.summariseErr
 	}

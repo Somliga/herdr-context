@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -43,7 +42,7 @@ type editOp struct {
 // the result, so p can fold it in later (§2.6). On failure the status says
 // why and that nothing was written.
 func summariseRange(a adapter.Adapter, st *store.Store, op editOp) (store.Summary, string) {
-	text, err := a.Summarise(op.src, op.from.Node.ID, op.to.Node.ID, op.kind == store.KindCompacted)
+	text, err := a.Summarise(op.src, op.from.Node.ID, op.to.Node.ID)
 	if err != nil {
 		return store.Summary{}, "summarise failed: " + err.Error() + " — nothing was written"
 	}
@@ -56,7 +55,7 @@ func summariseRange(a adapter.Adapter, st *store.Store, op editOp) (store.Summar
 	return sum, ""
 }
 
-// squashing is a squash or squash into… from its confirmation until it lands
+// squashing is a squash from its confirmation until it lands
 // or is cancelled (§2.9). The confirmation's command summarises and stores;
 // the summary is read in review, and commit runs everything after it.
 type squashing struct {
@@ -217,25 +216,6 @@ func squashCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) (su
 	return summarise, commit
 }
 
-// foldMove is target mode's hand (§2.7): the range still to be summarised,
-// and its drop from the source, both run only once the target is confirmed.
-type foldMove struct {
-	op          editOp        // the summary to make
-	sum         store.Summary // set once made, so a failure can scrub it
-	cut         editOp
-	first, last int    // the widened range, for the texts
-	cost        string // the cost text, up to "Then: "
-	figures     string
-}
-
-// note is what the place menu and every confirmation on the move add.
-func (mv *foldMove) note() string {
-	if mv == nil {
-		return ""
-	}
-	return fmt.Sprintf("\n…and turns %d–%d are dropped from %s", mv.first, mv.last, shortID(mv.cut.src.ID))
-}
-
 // changedElsewhere is §5.1's refusal: "" if no line in sids was replaced
 // on disk since st loaded, else why the edit is refused. It is asked right
 // before anything is paid for or written, and again before a splice that
@@ -252,87 +232,6 @@ func changedElsewhere(st *store.Store, sids ...string) string {
 		}
 	}
 	return ""
-}
-
-// moveCmd is squash into…'s confirmed move (§2.7), split at its review
-// (§2.9): summarise asks the source and makes and stores the summary; commit
-// has land write it at the target, and cutAfter drop the range from the
-// source. Each runs only if the one before succeeded.
-//
-// merge says land splices target, so target is checked as well as the source.
-// A branch or a send leaves target as it is and may start from an old line.
-func moveCmd(a adapter.Adapter, st *store.Store, mv foldMove, target string, merge bool, live LiveFunc, land func(store.Summary) tea.Cmd) (summarise tea.Cmd, commit func(store.Summary) tea.Cmd) {
-	lines := []string{mv.cut.src.ID}
-	if merge {
-		lines = append(lines, target)
-	}
-	summarise = summariseCmd(a, st, mv.op, func() string {
-		if stale := changedElsewhere(st, lines...); stale != "" {
-			return stale
-		}
-		if live != nil {
-			_, status, err := live(mv.cut.src.ID)
-			if err != nil {
-				return "cannot tell whether the source is busy: " + err.Error() + " — nothing was paid or written"
-			}
-			if busy(status) {
-				return "the source's agent is " + status + " — wait for it to finish; nothing was paid or written"
-			}
-		}
-		return ""
-	})
-	commit = func(sum store.Summary) tea.Cmd {
-		mv.sum = sum
-		return func() tea.Msg {
-			if stale := changedElsewhere(st, lines...); stale != "" {
-				return actionDoneMsg{status: "summary stored — " + stale}
-			}
-			return cutAfter(land(sum), a, st, mv, target, live)()
-		}
-	}
-	return summarise, commit
-}
-
-// cutAfter runs fold and, only if it landed, drops mv's range from its
-// source. The fold comes first: if the drop then fails, the stretch is in two
-// places, never in none. target is the session the user squashed into. The
-// drop is editCmd's, so the source's agent is asked again right before it
-// (§6.1).
-func cutAfter(fold tea.Cmd, a adapter.Adapter, st *store.Store, mv foldMove, target string, live LiveFunc) tea.Cmd {
-	return func() tea.Msg {
-		msg := fold().(actionDoneMsg)
-		// A fold reloads or quits only when it wrote and recorded; anything
-		// else is its failure, and the source stays as it is. The summary was
-		// paid for and stored, so p can place it without paying again.
-		if !msg.reload && !msg.quit {
-			msg.status = "summary stored — " + msg.status
-			return msg
-		}
-		cut := editCmd(a, st, mv.cut, live)().(actionDoneMsg)
-		if !cut.reload {
-			tip := msg.tip
-			if tip == "" {
-				tip = target
-			}
-			return actionDoneMsg{status: "squashed into " + shortID(target) + ", but the source was not dropped: " + scrubbed(errors.New(cut.status), mv.sum.Text), reload: true, tip: tip}
-		}
-		// "dropped n turns from <src> → <new>", without the pointer to the
-		// drop: the cursor lands on the fold's result.
-		msg.status = "squashed into " + shortID(target) + ", " + strings.TrimSuffix(cut.status, continueThere)
-		return msg
-	}
-}
-
-// confirmMove raises target mode's one confirmation: the cost, then what
-// lands at the target and what leaves the source (§2.7).
-func (u uiModel) confirmMove(at *tree.Node, then string, merge bool, land func(store.Summary) tea.Cmd) (tea.Model, tea.Cmd) {
-	mv := u.folding
-	then = fmt.Sprintf("%s · turns %d–%d are dropped from %s", then, mv.first, mv.last, shortID(mv.cut.src.ID))
-	u.confirm = mv.cost + then + "\n\n[enter] go   [esc] back"
-	summarise, commit := moveCmd(u.a, u.st, *mv, at.SessionID, merge, u.live, land)
-	u.pending, u.pendingBusy = summarise, "summarising…"
-	u.squash = &squashing{first: mv.first, last: mv.last, src: mv.cut.src.ID, figures: mv.figures, then: then, commit: commit}
-	return u, nil
 }
 
 const continueThere = " — ⏎ on it to continue there"
@@ -490,14 +389,8 @@ func (u uiModel) openTip(n *tree.Node) (tea.Model, tea.Cmd) {
 
 const replacesLine = "A new session replaces this line in the tree (the old one is hidden, kept on disk)."
 
-// kindFold names squash into… in editConfirm. It is not a store kind: the
-// move writes a merge or branch at its target and a drop (KindCut) here.
-const kindFold = "fold"
-
-// editConfirm raises the one confirmation for a range option (§2.3), or for
-// squash into… enters target mode, whose confirmation follows the target. kind
-// is store.KindCompacted (squash), kindFold (squash into…) or store.KindCut
-// (drop).
+// editConfirm raises the one confirmation for a range option (§2.3). kind is
+// store.KindCompacted (squash) or store.KindCut (drop).
 func (u uiModel) editConfirm(kind string) (tea.Model, tea.Cmd) {
 	from, to, ok := u.m.RangeSpan()
 	if !ok {
@@ -510,9 +403,7 @@ func (u uiModel) editConfirm(kind string) (tea.Model, tea.Cmd) {
 		return u, nil
 	}
 	src := adapter.Session{ID: to.SessionID, CWD: to.SessionCWD, Path: to.SessionPath}
-	// squash into… writes to this line only once its target is confirmed, and
-	// its agent is checked then (§2.7).
-	if kind != kindFold && !u.liveCheck(src.ID) {
+	if !u.liveCheck(src.ID) {
 		return u, nil
 	}
 	sp, err := u.a.Widen(src, from.Node.ID, to.Node.ID)
@@ -529,34 +420,16 @@ func (u uiModel) editConfirm(kind string) (tea.Model, tea.Cmd) {
 		u.pending, u.pendingBusy = editCmd(u.a, u.st, op, u.live), "dropping…"
 		return u, nil
 	}
-	if kind == kindFold && sp.First <= 1 && sp.Last >= sp.Turns {
-		u.status = "a squash into… must leave something behind — use p or branch here to copy a whole line"
-		return u, nil
-	}
 	turns, entries, size, err := u.a.Preview(src, sp.End)
 	if err != nil {
 		u.status = "cannot summarise this range: " + err.Error()
 		return u, nil
 	}
-	heading := "Squash"
-	if kind == kindFold {
-		heading = "Squash into…"
-	}
-	cost := fmt.Sprintf("%s turns %d–%d:\n\n  from  %q\n  to    %q\n\nThe model reads this session up to the end of the range — %d turn(s) · %d entries · %s — and describes only the range. That whole prefix is billed.\n\nThen: ",
-		heading, sp.First, sp.Last, from.Node.Title, to.Node.Title, turns, entries, humanBytes(size))
+	cost := fmt.Sprintf("Squash turns %d–%d:\n\n  from  %q\n  to    %q\n\nThe model reads this session up to the end of the range — %d turn(s) · %d entries · %s — and describes only the range. That whole prefix is billed.\n\nThen: ",
+		sp.First, sp.Last, from.Node.Title, to.Node.Title, turns, entries, humanBytes(size))
 	figures := fmt.Sprintf("%d turns · %d entries · %s", turns, entries, humanBytes(size))
 	if turns == 1 {
 		figures = fmt.Sprintf("1 turn · %d entries · %s", entries, humanBytes(size))
-	}
-	if kind == kindFold {
-		// Target mode: nothing is paid or written until the target is
-		// confirmed (§2.7).
-		cut := op
-		cut.kind = store.KindCut
-		u.folding = &foldMove{op: op, cut: cut, first: sp.First, last: sp.Last, cost: cost, figures: figures}
-		u.m.CancelRange()
-		u.status = fmt.Sprintf("move to a turn and press ⏎ to squash turns %d–%d into it · esc cancels", sp.First, sp.Last)
-		return u, nil
 	}
 	then := fmt.Sprintf("turns %d–%d are replaced by the summary.\n%s", sp.First, sp.Last, replacesLine)
 	u.confirm = cost + then + "\n\n[enter] go   [esc] back"
@@ -588,7 +461,6 @@ func (u *uiModel) liveCheck(sessionID string) bool {
 
 var rangeMenu = []string{
 	"squash — replace these turns with a summary",
-	"squash into… — summarise, put it in another line, drop it here",
 	"drop — remove these turns",
 }
 var placeMenu = []string{"merge here", "branch here"}
@@ -623,21 +495,8 @@ func (u uiModel) openRangeMenu() (tea.Model, tea.Cmd) {
 	return u, nil
 }
 
-// placeInFoldMode is ⏎ in target mode: folding the line into itself is
-// refused and stays in target mode (§2.7). The source's agent is asked only on
-// confirm, by moveCmd.
-func (u uiModel) placeInFoldMode(at *tree.Node) (tea.Model, tea.Cmd) {
-	if at.SessionID == u.folding.cut.src.ID {
-		u.status = "merge into another line — use squash for this one"
-		return u, nil
-	}
-	return u.foldAt(at, store.Summary{})
-}
-
 // placeChosen acts on the placement menu. Merge rewrites the line in place
 // and hides the old one; branch is v2's seeded graft and leaves both visible.
-// In target mode the summary does not exist yet, so each is raised as land,
-// run by the move once the summary is made.
 func (u uiModel) placeChosen(idx int) (tea.Model, tea.Cmd) {
 	at, sum := u.pickAt, u.placing
 	u.pickAt = nil
@@ -653,9 +512,6 @@ func (u uiModel) placeChosen(idx int) (tea.Model, tea.Cmd) {
 		}
 		land := func(sum store.Summary) tea.Cmd {
 			return foldBackCmd(u.a, u.st, at, sp, u.dstCWD(at), sum, u.agentFor(at), u.send)
-		}
-		if u.folding != nil {
-			return u.confirmMove(at, "a new line branches at "+shortID(at.SessionID)+", carrying the summary", false, land)
 		}
 		turns, entries, size, err := u.a.Preview(src, sp.End)
 		if err != nil {
@@ -676,9 +532,6 @@ func (u uiModel) placeChosen(idx int) (tea.Model, tea.Cmd) {
 			dst: u.dstCWD(at), title: "⤶ " + title(sum.Text, 40)}
 		return editCmd(u.a, u.st, op, u.live)
 	}
-	if u.folding != nil {
-		return u.confirmMove(at, "the summary is merged into "+shortID(at.SessionID), true, land)
-	}
 	sp, err := u.a.Widen(src, at.Node.ID, at.Node.ID)
 	if err != nil {
 		u.status = "cannot merge here: " + err.Error()
@@ -689,17 +542,13 @@ func (u uiModel) placeChosen(idx int) (tea.Model, tea.Cmd) {
 	return u, nil
 }
 
-// foldAt is choosing sum for turn at, from p's picker or from target mode: at
-// the live tip it is the next message, anywhere else the place menu (§2.5).
-// In target mode each of those landings is confirmed with the cost (§2.7).
+// foldAt is choosing sum for turn at, from p's picker: at the live tip it is
+// the next message, anywhere else the place menu (§2.5).
 func (u uiModel) foldAt(at *tree.Node, sum store.Summary) (tea.Model, tea.Cmd) {
 	if agent := u.agentFor(at); agent != "" && at.IsSessionLeaf && u.send != nil {
 		// The live tip: foldBackCmd's send path ignores sp entirely.
 		land := func(sum store.Summary) tea.Cmd {
 			return foldBackCmd(u.a, u.st, at, entrySpan(at.Node.ID), u.dstCWD(at), sum, agent, u.send)
-		}
-		if u.folding != nil {
-			return u.confirmMove(at, "the summary is sent to "+agent+" as your next message", false, land)
 		}
 		// Nothing is copied and nothing is written: the summary is the next
 		// message. There is no cost to show.

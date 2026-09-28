@@ -330,7 +330,7 @@ func (w *world) branch(current, sid, id string) string {
 }
 
 // selectRange fixes a range from sid's entry from to its entry to and
-// chooses option opt of the range menu (0 squash, 1 squash into…, 2 drop).
+// chooses option opt of the range menu (0 squash, 1 drop).
 func selectRange(t *testing.T, u uiModel, sid, from, to string, opt int) uiModel {
 	t.Helper()
 	u = cursorTo(t, u, sid, to)
@@ -697,111 +697,6 @@ func TestFoldOnABranchOfABranchLandsOnARowYouCanSee(t *testing.T) {
 	})
 }
 
-// B. squash into… moves a branch's turns into the trunk, then the trunk's
-// into a branch of that branch.
-func TestScenarioSquashIntoAcrossBranches(t *testing.T) {
-	w := newWorld(t)
-	b, c := branchesOfBranches(w)
-	// A fresh, never-unfolded uiModel, before selectRange's cursorTo unfolds
-	// the one this test drives.
-	checkVisibleFolded(t, allOf(w.open(sidT)), b)
-	checkVisibleFolded(t, allOf(w.open(sidT)), c)
-
-	// B's own b2..b3 → squash into… → T's last turn → merge here → confirm.
-	u := selectRange(t, allOf(w.open(b)), b, "b2-p", "b3-r", 1)
-	if u.folding == nil {
-		t.Fatalf("not in target mode: %q", u.status)
-	}
-	u = drive(t, cursorTo(t, u, sidT, "t5-r"), enter)
-	if u.menu != "place" {
-		t.Fatalf("no place menu: %q", u.status)
-	}
-	u = drive(t, u, enter) // merge here
-	if !strings.Contains(u.confirm, "merged into "+shortID(sidT)) || !strings.Contains(u.confirm, "dropped from "+shortID(b)) {
-		t.Fatalf("confirmation:\n%s", u.confirm)
-	}
-	u = drive(t, u, enter, enter) // confirm, then commit the review
-	if w.summaries() != 1 {
-		t.Fatalf("%d summary calls, want 1; status %q", w.summaries(), u.status)
-	}
-	t1, b1 := w.replacement(sidT), w.replacement(b)
-	if !strings.HasPrefix(u.status, "squashed into "+shortID(sidT)+", dropped 2 turns from "+shortID(b)) {
-		t.Fatalf("status %q", u.status)
-	}
-
-	u = allOf(u)
-	checkLines(t, u, t1, b1, c)
-	var merged string
-	for _, l := range screen(u) {
-		if strings.Contains(l, "⤶ merged from "+shortID(b)) {
-			merged = l
-		}
-	}
-	if merged == "" {
-		t.Errorf("T's replacement has no ⤶ merged-from row:\n%s", strings.Join(screen(u), "\n"))
-	}
-	if got := rowText(u, b1, "b1-r"); !strings.Contains(got, "✂ 2 turns dropped") {
-		t.Errorf("B's replacement's last row %q, want the ✂ marker", got)
-	}
-	checkHangsUnder(t, u, b1, "b1-p", t1, "t2-r")
-	checkHangsUnder(t, u, c, "c1-p", b1, "b1-r")
-	checkNoCopies(t, u)
-	checkScopes(t, u, t1, b1, c)
-	for _, id := range []string{"b2-p", "b3-p"} {
-		if rowOf(u, b1, id) >= 0 {
-			t.Errorf("%s still in B's replacement", id)
-		}
-	}
-
-	// Now T's t3..t4 → squash into… → C's tip → branch here → confirm.
-	u = selectRange(t, u, t1, "t3-p", "t4-r", 1)
-	u = drive(t, cursorTo(t, u, c, "c1-r"), enter)
-	if u.menu != "place" {
-		t.Fatalf("no place menu: %q", u.status)
-	}
-	u = drive(t, u, down, enter) // branch here
-	if !strings.Contains(u.confirm, "branches at "+shortID(c)) {
-		t.Fatalf("confirmation:\n%s", u.confirm)
-	}
-	u = drive(t, u, enter, enter) // confirm, then commit the review
-	t2 := w.replacement(t1)
-	if !strings.HasPrefix(u.status, "squashed into "+shortID(c)+", dropped 2 turns from "+shortID(t1)) {
-		t.Fatalf("status %q", u.status)
-	}
-	st, _ := store.Load(w.repo)
-	var d string
-	for id, br := range st.Branches {
-		if br.GraftedFrom.SessionID == c {
-			d = id
-		}
-	}
-	if d == "" {
-		t.Fatal("no branch recorded off C")
-	}
-
-	u = allOf(u)
-	checkLines(t, u, t2, b1, c, d)
-	if got := rowText(u, t2, "t5-p"); !strings.Contains(got, "✂ 2 turns dropped before this") {
-		t.Errorf("T's row after the drop %q, want the ✂ marker", got)
-	}
-	checkHangsUnder(t, u, b1, "b1-p", t2, "t2-r")
-	checkHangsUnder(t, u, c, "c1-p", b1, "b1-r")
-	rows := u.m.Rows()
-	for i, r := range rows {
-		if r.Node.SessionID == d {
-			if r.Node.Node.Kind != adapter.KindSummaryImport || !strings.Contains(screen(u)[i], "↳ "+shortID(d)) {
-				t.Errorf("the new branch starts at %q, want its ⤶ merged-from seed marked ↳", screen(u)[i])
-			}
-			if p := rowOf(u, c, "c1-r"); i != p+1 {
-				t.Errorf("the new branch is at row %d, want right under C's c1-r (row %d)", i, p)
-			}
-			break
-		}
-	}
-	checkNoCopies(t, u)
-	checkScopes(t, u, t2, b1, c, d)
-}
-
 // C. Three replacements of one line in place, with branches off turns 2
 // and 4.
 func TestScenarioAChainOfReplacements(t *testing.T) {
@@ -840,7 +735,7 @@ func TestScenarioAChainOfReplacements(t *testing.T) {
 	})
 
 	// 2. drop T's turn 3.
-	u = selectRange(t, u, t1, "t3-p", "t3-r", 2)
+	u = selectRange(t, u, t1, "t3-p", "t3-r", 1)
 	u = drive(t, u, enter)
 	t2 := w.replacement(t1)
 	if got := rowText(u, t2, "t4-p"); !strings.Contains(got, "✂ 1 turns dropped before this") {
@@ -870,7 +765,7 @@ func TestScenarioAChainOfReplacements(t *testing.T) {
 
 	// 4. drop T's turn 4, which D left: D becomes a root from a removed
 	// stretch, B stays.
-	u = selectRange(t, u, t3, "t4-p", "t4-r", 2)
+	u = selectRange(t, u, t3, "t4-p", "t4-r", 1)
 	u = drive(t, u, enter)
 	t4 := w.replacement(t3)
 	u = allOf(u)
@@ -905,7 +800,7 @@ func TestScenarioHandoverAfterSeveralEdits(t *testing.T) {
 			if !strings.HasSuffix(u.status, "⏎ on it to continue there") {
 				t.Fatalf("squash status %q", u.status)
 			}
-			u = selectRange(t, u, t1, "t4-p", "t4-r", 2)
+			u = selectRange(t, u, t1, "t4-p", "t4-r", 1)
 			u = drive(t, u, enter)
 			t2 := w.replacement(t1)
 			for _, c := range w.h.calls {
@@ -1040,7 +935,7 @@ func TestScenarioTwoOverlaysEditTheSameLine(t *testing.T) {
 	w.trunk(sidT, "t1", "t2", "t3", "t4")
 	u1, u2 := w.open(sidT), w.open(sidT)
 
-	u1 = drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 2), enter)
+	u1 = drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 1), enter)
 	r1 := w.replacement(sidT)
 	u2 = drive(t, selectRange(t, u2, sidT, "t3-p", "t4-r", 0), enter)
 	if u2.status != staleLine || w.summaries() != 0 {
@@ -1092,7 +987,7 @@ func TestAnEditIsRefusedIfItsLineIsReplacedDuringTheSummary(t *testing.T) {
 	w := newWorld(t)
 	w.trunk(sidT, "t1", "t2", "t3", "t4")
 	u1, u2 := w.open(sidT), w.open(sidT)
-	u1 = drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 2), enter)
+	u1 = drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 1), enter)
 	r1 := w.replacement(sidT)
 
 	// Hide the drop until the summary call, which puts it back.
@@ -1116,32 +1011,6 @@ func TestAnEditIsRefusedIfItsLineIsReplacedDuringTheSummary(t *testing.T) {
 	}
 }
 
-// squash into… a line another overlay replaced is refused before the
-// summary: the merge's target is checked, not only its source.
-func TestAMergeIntoAReplacedLineIsRefused(t *testing.T) {
-	w := newWorld(t)
-	w.trunk(sidT, "t1", "t2", "t3")
-	w.trunk(sidU, "u1", "u2", "u3")
-	u1, u2 := w.open(sidT), allOf(w.open(sidU))
-	drive(t, selectRange(t, u1, sidT, "t2-p", "t2-r", 2), enter)
-	r1 := w.replacement(sidT)
-
-	u2 = selectRange(t, u2, sidU, "u2-p", "u3-r", 1)
-	u2 = drive(t, cursorTo(t, u2, sidT, "t3-r"), enter)
-	if u2.menu != "place" {
-		t.Fatalf("no place menu: %q", u2.status)
-	}
-	u2 = drive(t, u2, enter, enter) // merge here, confirm
-	if u2.status != staleLine || w.summaries() != 0 {
-		t.Fatalf("status %q, %d summary calls", u2.status, w.summaries())
-	}
-	w.checkTranscripts(3)
-	st, _ := store.Load(w.repo)
-	if st.Resolve(sidT) != r1 || st.Resolve(sidU) != sidU {
-		t.Fatalf("store: T→%s, U→%s", shortID(st.Resolve(sidT)), shortID(st.Resolve(sidU)))
-	}
-}
-
 // A store that cannot be read cannot say whether the line was replaced, so
 // the edit is refused rather than guessed at.
 func TestAnEditIsRefusedIfTheStoreCannotBeRead(t *testing.T) {
@@ -1156,28 +1025,6 @@ func TestAnEditIsRefusedIfTheStoreCannotBeRead(t *testing.T) {
 		t.Fatalf("status %q, %d summary calls", u.status, w.summaries())
 	}
 	w.checkTranscripts(1)
-}
-
-// squash into… from a line another overlay replaced is refused before the
-// summary, whatever its target.
-func TestAMoveFromAReplacedLineIsRefused(t *testing.T) {
-	w := newWorld(t)
-	w.trunk(sidT, "t1", "t2", "t3")
-	w.trunk(sidU, "u1", "u2")
-	u1, u2 := w.open(sidT), allOf(w.open(sidT))
-	drive(t, selectRange(t, u1, sidT, "t1-p", "t1-r", 2), enter)
-	r1 := w.replacement(sidT)
-
-	u2 = selectRange(t, u2, sidT, "t2-p", "t3-r", 1)
-	u2 = drive(t, cursorTo(t, u2, sidU, "u1-r"), enter)
-	u2 = drive(t, u2, down, enter, enter) // branch here, confirm
-	if u2.status != staleLine || w.summaries() != 0 {
-		t.Fatalf("status %q, %d summary calls", u2.status, w.summaries())
-	}
-	w.checkTranscripts(3)
-	if st, _ := store.Load(w.repo); st.Resolve(sidT) != r1 || len(st.Branches) != 2 {
-		t.Fatalf("store: T→%s, %d records", shortID(st.Resolve(sidT)), len(st.Branches))
-	}
 }
 
 // TestBMidLineShowsTheBranchAndGoesToIt is the reported bug: b on a mid-line
@@ -1256,18 +1103,20 @@ func TestContinueMidLineShowsTheBranch(t *testing.T) {
 }
 
 // TestBranchHereMidLineShowsTheBranch is the third writer of the same edge:
-// squash into… a mid-line prompt of real-shaped turns, then branch here.
+// p places a summary at a mid-line prompt of real-shaped turns, branch here.
 func TestBranchHereMidLineShowsTheBranch(t *testing.T) {
 	w := newWorld(t)
 	w.durations = true
 	w.trunk(sidT, "NUGGET", "TRIPPLEDIP", "BULLDOG")
 	w.trunk(sidU, "u1", "u2")
-	u := selectRange(t, allOf(w.open(sidT)), sidU, "u1-p", "u1-r", 1)
-	u = drive(t, cursorTo(t, u, sidT, "TRIPPLEDIP-p"), enter)
+	// Squash U's u1, storing a summary p can place.
+	u := selectRange(t, allOf(w.open(sidT)), sidU, "u1-p", "u1-r", 0)
+	u = drive(t, u, enter, enter) // confirm, then commit the review
+	u = drive(t, cursorTo(t, u, sidT, "TRIPPLEDIP-p"), key('p'), enter)
 	if u.menu != "place" {
 		t.Fatalf("no place menu: %q", u.status)
 	}
-	u = drive(t, u, down, enter, enter, enter) // branch here, confirm, commit the review
+	u = drive(t, u, down, enter, enter) // branch here, confirm
 	st, _ := store.Load(w.repo)
 	var d string
 	for id, br := range st.Branches {
@@ -1349,7 +1198,7 @@ func TestAnInvisibleForkPointAfterADrop(t *testing.T) {
 			w.durations = true
 			w.trunk(sidT, "NUGGET", "TRIPPLEDIP", "BULLDOG", "HORSE")
 			b := oldEdge(t, w, "TRIPPLEDIP-p", "TRIPPLEDIP")
-			u := selectRange(t, allOf(w.open(sidT)), sidT, tc.drop+"-p", tc.drop+"-r", 2)
+			u := selectRange(t, allOf(w.open(sidT)), sidT, tc.drop+"-p", tc.drop+"-r", 1)
 			u = drive(t, u, enter)
 			r := w.replacement(sidT)
 			if r == sidT {
@@ -1382,7 +1231,7 @@ func TestADropInRealShapedTurnsMarksTheNextPrompt(t *testing.T) {
 	w := newWorld(t)
 	w.durations = true
 	w.trunk(sidT, "NUGGET", "TRIPPLEDIP", "BULLDOG")
-	u := selectRange(t, w.open(sidT), sidT, "TRIPPLEDIP-p", "TRIPPLEDIP-r", 2)
+	u := selectRange(t, w.open(sidT), sidT, "TRIPPLEDIP-p", "TRIPPLEDIP-r", 1)
 	u = drive(t, u, enter)
 	r := w.replacement(sidT)
 	if got := rowText(u, r, "BULLDOG-p"); !strings.Contains(got, "✂ 1 turns dropped before this") {

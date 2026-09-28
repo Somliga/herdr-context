@@ -70,7 +70,7 @@ graft=$(printf '%s\n' "$out" | sed -n 2p)
 
 reply=$(cd "$work/cwd" && claude -p --model claude-haiku-4-5-20251001 \
   --resume "$sid" \
-  "In one line each: what is the earliest thing we discussed, and what does the summary note you were just given say was rejected?" \
+  "In one line each: what is the earliest thing we discussed, and what does the summary note you were just given say were the dead ends?" \
   < /dev/null)
 echo "--- reply ---"; echo "$reply"; echo "-------------"
 
@@ -93,17 +93,17 @@ echo
 echo "[1] Seed fields vs. a real resume (Task 4, Minor 6):"
 echo "    Did the session above resume at all, without Claude Code complaining"
 echo "    about the grafted file? The reply must show BOTH the grafted history"
-echo "    (the earliest thing discussed) AND the seeded summary (what was"
-echo "    rejected). If Claude Code rejected the file or the reply is missing"
+echo "    (the earliest thing discussed) AND the seeded summary (its"
+echo "    dead ends). If Claude Code rejected the file or the reply is missing"
 echo "    either half, the seed's fields (version, timestamp granularity, or"
 echo "    something else) matter more than assumed."
 echo
 echo "[2] Summary prompt quality (Task 5, Minor d):"
 echo "    Read the summary printed in step 1. Does it describe ONLY the"
 echo "    requested range (turn $from through $to), not the whole transcript?"
-echo "    Does it contain a 'rejected, and why' section with specifics, not a"
+echo "    Does it contain a 'dead ends' section with specifics, not a"
 echo "    vague non-answer? A summary that just restates the range's topic"
-echo "    without saying what was rejected has failed even though this script"
+echo "    without saying what failed has failed even though this script"
 echo "    exits 0."
 echo
 echo "[3] herdr agent prompt with a multi-paragraph message (Task 6):"

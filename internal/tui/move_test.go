@@ -331,14 +331,6 @@ func TestAMoveThatChangesNothingIsRefused(t *testing.T) {
 	}
 }
 
-// squash into…'s target mode already has one thing in hand.
-func TestMIsSwallowedInTargetMode(t *testing.T) {
-	u, _ := press(t, moveUI(t, &fakeAdapter{}, &herdrLog{}), key('m'))
-	if u.moving != nil || u.folding == nil {
-		t.Fatalf("m in target mode: moving %v, folding %v", u.moving != nil, u.folding != nil)
-	}
-}
-
 // A move within the line keeps the turn's ids: a branch off it still hangs
 // under it, and its label still shows.
 func TestAMoveWithinTheLineKeepsBranchesAndLabels(t *testing.T) {
@@ -389,4 +381,11 @@ func TestAMoveWhoseStoreIsNotSavedLetsGo(t *testing.T) {
 		t.Fatalf("moving %v, status %q", u.moving != nil, u.status)
 	}
 	w.checkTranscripts(3) // T, U and the target's new line; T is untouched
+}
+
+// The range menu is squash and drop, nothing else.
+func TestTheRangeMenuHasTwoOptions(t *testing.T) {
+	if len(rangeMenu) != 2 || !strings.HasPrefix(rangeMenu[0], "squash —") || !strings.HasPrefix(rangeMenu[1], "drop —") {
+		t.Fatalf("range menu %q", rangeMenu)
+	}
 }

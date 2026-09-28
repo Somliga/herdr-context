@@ -19,26 +19,10 @@ var summariseTimeout = 5 * time.Minute // a var so a test can shorten it
 // resumed. Tests only: it is how a test observes what the model is shown.
 var summariseGraftHook func(path string)
 
-// SummarisePrompt asks for the four things that make a summary worth folding
-// back. "rejected, and why" matters most: it is what stops the trunk paying
-// again for a dead end this branch already explored.
-func SummarisePrompt(fromTitle, toTitle string) string {
-	return fmt.Sprintf(`Summarise only the part of this conversation from the turn beginning %q up to and including the turn beginning %q. Ignore everything before that range except as context.
-
-Write four short sections:
-- attempted: what this stretch was trying to do.
-- decided: what was settled, and the reasoning.
-- rejected: what was tried and abandoned, and why not. Be specific; this is what stops the work being repeated.
-- unfinished: what remains.
-
-Be concise and concrete. Take no actions; reply with the summary text only.`,
-		fromTitle, toTitle)
-}
-
-// CompactPrompt is for a compaction: the text replaces the range in its own
-// line, so it is a handover to the same conversation — current state and
-// exact identifiers first, what comes next last. SummarisePrompt is for a
-// summary carried to another line, where what was rejected matters most.
+// CompactPrompt is every summary's prompt: the text replaces the range in
+// its own line, so it is a handover to the same conversation — current state
+// and exact identifiers first, what comes next last. A squash moved into
+// another line carries the same text.
 func CompactPrompt(fromTitle, toTitle string) string {
 	return fmt.Sprintf(`Compact the part of this conversation from the turn beginning %q up to and including the turn beginning %q. Your text will replace those turns: the conversation continues from it as if they had happened, so write what the continuation needs.
 
@@ -58,7 +42,7 @@ Be concise and concrete. Keep exact names, paths, commands and numbers verbatim.
 // the prompt, captures stdout and removes the throwaway. The graft is needed
 // because --resume always continues at a session's tip: summarising "up to
 // turn 12" must not let the model see turn 13.
-func Summarise(srcPath, fromTurn, toTurn, tmpCWD string, compact bool) (string, error) {
+func Summarise(srcPath, fromTurn, toTurn, tmpCWD string) (string, error) {
 	es, skipped, err := ParseFile(srcPath)
 	if err != nil {
 		return "", err
@@ -126,10 +110,7 @@ func Summarise(srcPath, fromTurn, toTurn, tmpCWD string, compact bool) (string, 
 	defer cancel()
 	fromTitle, toTitle := title(fromTurn), title(toTurn)
 	titles = append(titles, fromTitle, toTitle)
-	prompt := SummarisePrompt(fromTitle, toTitle)
-	if compact {
-		prompt = CompactPrompt(fromTitle, toTitle)
-	}
+	prompt := CompactPrompt(fromTitle, toTitle)
 	cmd := exec.CommandContext(ctx, "claude", "-p", "--resume", sid, prompt)
 	cmd.Dir = tmpCWD
 	cmd.Stdin = nil

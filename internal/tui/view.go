@@ -257,12 +257,7 @@ type uiModel struct {
 	pickAt  *tree.Node
 	placing store.Summary // the summary chosen in the picker, while the placement menu is open
 
-	// folding is squash into…'s move while the user picks its target
-	// (§2.7); it stays through the place menu and confirmation, and esc on
-	// any of them cancels it.
-	folding *foldMove
-
-	// squash is a squash or squash into… from its confirmation to its
+	// squash is a squash from its confirmation to its
 	// landing: summarising while busy, then the review (§2.9).
 	squash *squashing
 	ticks  int // the latest squash's clock; a tick for any other is dropped
@@ -322,8 +317,8 @@ func (u *uiModel) rebuild() {
 // never actually read by anyone.
 type actionDoneMsg struct {
 	status string
-	// quit and reload are set only when the action succeeded; cutAfter
-	// relies on that to cut only after a fold that landed.
+	// quit and reload are set only when the action succeeded; carryCmd
+	// relies on that to drop only after a move that landed.
 	quit bool
 	// reload re-reads the sessions: an edit opens nothing, so the overlay is
 	// still up and the tree on screen still shows the old line. tip names the
@@ -536,14 +531,6 @@ func (u uiModel) agentFor(n *tree.Node) string {
 	return ""
 }
 
-// cancelMove ends target mode, if it is on: nothing was paid or written.
-func (u uiModel) cancelMove() uiModel {
-	if u.folding != nil {
-		u.folding, u.status = nil, "squash into… cancelled — nothing was paid or written"
-	}
-	return u
-}
-
 // stepOff repeats step until the cursor is off the section in hand, and
 // reports false, the cursor back where it was, if the rows run out first.
 func (u *uiModel) stepOff(step func()) bool {
@@ -709,13 +696,12 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				which, idx := u.menu, u.menuIdx
 				u.menu, u.menuIdx = "", 0
 				if which == "range" {
-					return u.editConfirm([]string{store.KindCompacted, kindFold, store.KindCut}[idx])
+					return u.editConfirm([]string{store.KindCompacted, store.KindCut}[idx])
 				}
 				return u.placeChosen(idx)
 			case "esc", "q":
 				if u.menu == "place" {
 					u.pickAt = nil
-					u = u.cancelMove()
 				}
 				u.menu, u.menuIdx = "", 0
 			}
@@ -730,7 +716,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return u, nil
 				}
 				u.m.CancelRange() // acted on; a summarise consumes its range
-				u.busy, u.folding = busy, nil
+				u.busy = busy
 				if u.squash != nil {
 					sq := *u.squash
 					sq.since = time.Now()
@@ -744,28 +730,10 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "esc", "q":
 				// The range survives: escaping the cost dialog is how you go
 				// back and move the range's start, not how you abandon it.
-				// Target mode's confirmation instead cancels the move (§2.7).
 				u.confirm, u.pending, u.pendingBusy = "", nil, ""
 				u.squash = nil
-				u = u.cancelMove()
 			}
 			return u, nil
-		}
-		if u.folding != nil {
-			// Target mode: the tree moves as usual, ⏎ picks the target, and
-			// s, p, b and m stay quiet so there is only one thing in hand.
-			switch msg.String() {
-			case "enter":
-				n := u.m.Selected()
-				if n == nil || n.Broken || n.Node.ID == "" {
-					return u, nil
-				}
-				return u.placeInFoldMode(n)
-			case "esc":
-				return u.cancelMove(), nil
-			case "s", "p", "b", "m":
-				return u, nil
-			}
 		}
 		if u.moving != nil {
 			// Moving (§2.8): ⏎ puts the section after the cursor's turn,
@@ -981,7 +949,7 @@ func (u uiModel) View() string {
 		return menuView("Do what with this range?", rangeMenu, u.menuIdx)
 	}
 	if u.menu == "place" {
-		return menuView(fmt.Sprintf("Place the summary at:  %q", u.pickAt.Node.Title)+u.folding.note(), placeMenu, u.menuIdx)
+		return menuView(fmt.Sprintf("Place the summary at:  %q", u.pickAt.Node.Title), placeMenu, u.menuIdx)
 	}
 	var b strings.Builder
 	if len(u.m.Rows()) == 0 {
@@ -1057,8 +1025,6 @@ func (u uiModel) View() string {
 	}
 	if u.moving != nil {
 		b.WriteString("↑↓ move to a turn  ⏎ put it after this turn  esc put it back\n")
-	} else if u.folding != nil {
-		b.WriteString("↑↓ move to a turn  ⏎ squash into it here  esc cancel\n")
 	} else if u.m.RangeEnd != nil {
 		// While a range is being selected, three keys change meaning. Saying
 		// so is cheaper than the user discovering that esc no longer closes.
