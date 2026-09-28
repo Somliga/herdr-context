@@ -13,9 +13,11 @@
 #   2. that a seeded graft resumes carrying both its grafted history AND
 #      the seeded summary
 #
-# It does NOT verify `herdr agent prompt` delivering a multi-paragraph
-# message reliably (check 3 below) — that needs a live agent pane and is
-# a separate manual step. See the checklist this script prints at the end.
+# It does NOT exercise `herdr agent prompt` delivering a multi-paragraph
+# message (check 3 below) — that needs a live agent pane. It was verified
+# live on 2026-09-28: the summary arrived as one message, and Claude Code
+# stored it wrapped in `<pasted_content>`, which the classifier now unwraps
+# (spec §2.5d). Re-check it by hand after a Claude Code or Herdr upgrade.
 set -euo pipefail
 
 if [ $# -lt 3 ]; then

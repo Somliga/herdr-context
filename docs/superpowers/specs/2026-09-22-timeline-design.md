@@ -1,5 +1,8 @@
 # herdr-tree — timeline model
 
+> **Partly superseded** by the context-editing spec (`2026-09-23-context-editing-design.md`): `s` selects a range for squash/drop (§4),
+> `p` offers merge here / branch here (§5), and the trunk is marked by a margin bar with always-indented branches (§2, §6b). See `AGENTS.md`.
+
 Date: 2026-09-22
 Status: draft for review
 Scope: v2. Builds on the v1 spec (`2026-09-21-herdr-tree-design.md`), which

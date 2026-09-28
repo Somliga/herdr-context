@@ -1,5 +1,8 @@
 # Context Editing Implementation Plan
 
+> **Historical** — Tasks 1–9 as planned. Later work (squash review and titles, move, `b`, family scope, headers, removal of
+> squash into…) was briefed from spec amendments; the spec's status block and `AGENTS.md` describe the current state.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let the user compact, cut, or insert into a line's context from the tree overlay, in one confirmed step, with the old line hidden and a live pane handed over.

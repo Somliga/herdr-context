@@ -1,5 +1,8 @@
 # herdr-tree — design
 
+> **Partly superseded** by the context-editing spec (`2026-09-23-context-editing-design.md`) and the timeline spec:
+> the TUI (§8: keys, layout, trunk rendering) is replaced; discovery, store, adapter boundary and grafting still describe the code. See `AGENTS.md`.
+
 Date: 2026-09-21
 Status: approved for implementation planning
 Scope: v1 thin slice (tree view + branch). Summarize and artifacts deferred to v1.1.

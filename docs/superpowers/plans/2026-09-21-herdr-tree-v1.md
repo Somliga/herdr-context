@@ -1,5 +1,8 @@
 # herdr-tree v1 Implementation Plan
 
+> **Historical** — the v1 plan, executed. Its TUI tasks are superseded by the context-editing spec
+> (`../specs/2026-09-23-context-editing-design.md`); see `AGENTS.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A Herdr plugin that draws a repo-wide tree of Claude Code conversation turns and starts a new Claude session continuing from any turn in it.

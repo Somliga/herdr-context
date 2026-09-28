@@ -1,7 +1,9 @@
 # herdr-tree
 
-A Herdr plugin that draws a repo-wide tree of Claude Code conversation turns
-and starts a new Claude session continuing from any turn in it.
+A Herdr plugin that shows a repo's Claude Code conversations as one tree —
+every session, every branch, every turn — and lets you edit their context:
+branch from any turn, squash a stretch into a summary, drop it, move a turn to
+another line, or place a stored summary anywhere.
 
 ## Install
 
@@ -24,62 +26,99 @@ command = "herdr-tree.open"
 |-----|--------|
 | ↑ ↓ | Move |
 | ← → | Fold / unfold |
-| ⏎ | Continue from the selected turn — resumes in place if it is the latest, branches otherwise |
-| s | Summarise: fixes the END of a range, then move to its start and press `s` or ⏎ |
-| p | Fold a summary back in at the selected turn |
-| L | Label the selected turn (empty clears) |
-| a | Toggle scope: this session ↔ all sessions |
-| f | Cycle filter: all entries ↔ only what a person typed |
-| esc | Cancel the range being selected, or close the overlay |
+| ⏎ | **Continue here.** On a line's tip: resume it (or hand over, below). On an earlier turn: confirm, then a new session continuing from the end of that turn opens in a pane |
+| b | **Branch** from the end of this turn. Opens nothing, asks nothing; the cursor lands on the new branch |
+| s | **Select** a range: fixes its end here; move to its start and press `s` or ⏎ to open `squash · drop` |
+| m | **Move** this turn (one section): ⏎ puts it after the turn under the cursor, esc puts it back |
+| p | **Place a summary** at this turn: pick a stored summary, then merge here / branch here |
+| L | Label this turn (empty clears) |
+| a | Scope: this session's family ↔ all sessions |
+| f | Filter: all entries ↔ only what a person typed |
+| esc | Cancel the range, move or dialog in progress; otherwise close (`q` also closes) |
 
-While a range is being selected the footer says so, and `esc` cancels the
-range rather than closing.
+The footer always shows what the keys do right now; while a range or a move is
+in progress it changes to say so.
 
-## Summarising and folding back
+## What you see
 
-`s` summarises a range of turns, on demand and never automatically. It costs a
-real model call: the summary is produced by reading the session up to the end
-of the range, so the confirmation reports what that costs before anything is
-spent. The summary is stored in the tree; the session is not touched.
+- **Session headers.** Each session's first row has a header line above it:
+  `<id>` for a root line, `↳ <id>` for a branch. A branch whose turn was
+  squashed or dropped away shows as a root marked `from a removed stretch`.
+- **Your path.** A cyan `▎` in the left margin marks every row on the path to
+  the session you are in. The default scope is that session's family: its root
+  line and every branch in it.
+- **Indentation means "branched here".** A branch is indented one level under
+  the turn it came from; the parent line continues at its own depth.
+- **Markers:**
+  - `⤶ squashed …` (blue) — a stretch of this line replaced by its summary.
+  - `⤶ merged from <id> …` (orange) — a summary brought in from another line.
+  - `✂ N turns dropped before/after this` (muted) — a drop.
+  - `⇢ 1 turn moved to <id>` (muted) — where a moved turn used to be.
+  - `⇠ moved from <id>` (muted) — the moved turn in its new line.
+  - `● current` — the tip of the session you are in.
 
-`p` appends a stored summary at the selected turn. Two things can happen, and
-the picker says which before you commit:
+## Squash
 
-- **At the tip of the session you are in**, the summary is simply your next
-  message and Herdr delivers it to the running agent. Nothing is copied.
-- **Anywhere else**, it starts a new session that rewinds to that turn and
-  carries the summary as its next turn. That copies the transcript, so it
-  confirms first with the same turns/entries/bytes figures ⏎ shows before a
-  branch.
+Select a range with `s`, press ⏎, choose **squash**.
 
-The first case needs to know where the live session is running. Herdr accepts
-a pane id wherever it accepts an agent, and `herdr agent list` reports each
-live agent's session id, so the session resolves to a pane. If nothing is
-holding the session — it was closed, or opened somewhere Herdr cannot see —
-the second path is taken instead, which is right: there is no conversation to
-continue. The picker states which one it is about to do, so the difference is
-never silent.
+1. **Confirm.** The dialog names the turns (widened to whole turns) and the
+   cost: the model reads the session up to the end of the range, and that
+   whole prefix is billed.
+2. **Summarising view.** Spinner and elapsed time. `ctrl+c` leaves, but the
+   call is already billed.
+3. **Review.** The summary is shown in full, with its title above it and what
+   will happen below it. `⏎` commits; `esc` cancels — nothing is written, and
+   the summary stays stored for `p`.
 
-An injected summary is marked two ways: the `⤶` prefix in its text, and a
-`herdrTree` field on the transcript entry. A summary **sent to a live agent**
-can only carry the prefix — a message has no entry of its own to hang a field
-on, it becomes whatever Claude Code records for a turn you typed. That is why
-the prefix is the guarantee and the field is the convenience: the prefix
-survives every route in, the field only survives a graft.
+On commit a new session replaces the line: the stretch becomes one
+`⤶ squashed: <title>` row. The model titles each squash itself (no extra
+call); if it doesn't, the row reads `⤶ squashed <from>..<to>`.
 
-A summary of a *different* session arriving here is an **import** — knowledge
-came in from a line that was abandoned. A summary of *this* session's own turns
-is a **compaction** — the line contracted and nothing new arrived. Both are the
-same operation; the injected turn's `⤶` prefix is what tells them apart, in the
-tree and to any tool that reads the transcript later.
+**Drop** is the same without a summary: free, and no note is left in the
+conversation.
 
-## How branching works
+## Move
 
-Claude Code has no supported way to resume at a specific message, so
-branching writes a new transcript containing only the ancestor chain of the
-chosen turn, then resumes it. See
-`docs/superpowers/specs/2026-09-21-herdr-tree-design.md`.
+`m` picks up one section — a prompt, or a `⤶` row, with everything under it.
+To move a stretch, squash it first, then move the `⤶` row. ⏎ puts it after the
+turn under the cursor, in the same line or another one. Moved into another
+line, a `⤶ squashed` row becomes `⤶ merged from <source>`. Nothing is billed.
 
-The transcript format is undocumented and verified against Claude Code
-2.1.278. The plugin refuses to branch rather than guess when it sees a
-format it has not been validated against.
+## Place a summary (`p`)
+
+Every squash's summary is stored. `p` picks one and puts it at a turn:
+
+- **At the tip of your session, while its agent is live**, it is sent to the
+  agent as your next message. Nothing is copied.
+- **Anywhere else**, choose **merge here** (inserted after this turn,
+  everything after it kept; replaces the line) or **branch here** (a new line
+  ending at this turn plus the summary; the old line stays).
+
+## Edits never open a pane
+
+Squash, drop, move, merge and `b` only write; the tree reloads with the cursor
+on the result. ⏎ is what moves you. ⏎ on a line that replaced one still open
+in a pane asks once, opens the new line focused, and then closes the old pane
+(text typed but not sent there is lost).
+
+## Safety
+
+- Source transcripts are never modified; every edit writes a new session.
+- Sessions are never deleted. A replaced line is hidden from the tree, its
+  file kept on disk.
+- An edit is refused while the session's agent is busy (anything but idle),
+  and if the line was changed in another overlay since this one loaded.
+
+## Cost
+
+Only summaries bill: one `claude -p` call per squash, on your normal Claude
+Code login. Branch, drop, move and merge are local file writes. The first
+message in an edited session is sent with a cold prompt cache.
+
+## Limits
+
+Claude Code's transcript format is undocumented. herdr-tree is verified
+against Claude Code 2.1.x and refuses to write rather than guess when it sees
+another version. Turns before a native `/compact` still show in the tree, but
+edits on them are refused ("that entry is not on this session's current
+line").

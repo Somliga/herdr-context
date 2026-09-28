@@ -1,8 +1,29 @@
 # herdr-tree — context editing
 
 Date: 2026-09-23
-Status: approved; amended 2026-09-23 after the first manual run (§2.2, §2.3,
-§2.5, §4, §6): three range options, and no edit ever opens a pane by itself
+Status: current and binding, as amended through 2026-09-28. Implemented at
+d7718fb (`feat/timeline-v2`). Where the text below and the code differ, the
+code is authoritative. In short, what is current:
+
+- The range menu is `squash · drop`. **squash into… is removed** (§0 note):
+  §2.7 and every mention of it no longer bind.
+- **move is one section** (`m`, §2.8); to move a stretch, squash it first.
+- ⏎ continues here, `b` branches (§2.5c); **no edit opens a pane**, ⏎ moves
+  you and hands over a replaced line's pane (§6.2).
+- Squash shows a summarising view and a review before it writes (§2.9) and
+  titles itself (§2.10); every summary uses the handover prompt.
+- `p` places a summary: sent to the live tip, or merge here / branch here
+  (§2.5); a delivered summary is recognised through `<pasted_content>` (§2.5d).
+- Tree: family scope, `▎` path bar, always-indented branches, session header
+  lines, `⤶` rows as section heads (§5.3b–§5.3f).
+- Known differences, code wins: the busy guard is an allowlist — only `idle`
+  (or no agent) is safe, not "refuse if `working`" (§6.1); the drop marker
+  reads `✂ N turns dropped before this` / `after this` (§5.4); the busy
+  re-check status names the status (`agent is <status>`, §6.1 step 3).
+- Decisions and deferred minors: `docs/DECISIONS.md`.
+
+Earlier status: approved; amended 2026-09-23 after the first manual run (§2.2,
+§2.3, §2.5, §4, §6): no edit ever opens a pane by itself
 Scope: v3. Builds on the timeline spec (`2026-09-22-timeline-design.md`),
 which stands unchanged except where noted in §9.
 
