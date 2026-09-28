@@ -159,6 +159,16 @@ tip still resumes it unchanged.
   a range, a menu, a confirmation or squash into…'s target mode is active.
 - The footer reads `⏎ continue here · b branch · …`.
 
+### 2.5d A delivered summary is still recognised
+
+When a summary is sent to the live tip (§2.5), Claude Code — not us — writes
+the entry, and it stores a long typed-in message wrapped as
+`<pasted_content id="…">` after leading blank lines (observed 2026-09-28). The
+classifier unwraps exactly that: leading whitespace, then one
+`<pasted_content id="…">` opening line, then the text. If what remains starts
+with a `⤶` prefix, the entry is that summary kind (orange/blue, a turn
+opener) and its row title is the `⤶` line. Any other paste is untouched.
+
 ### 2.6 The summary is still stored
 
 Both summarise options store the summary exactly as v2 does, so `p` can merge
