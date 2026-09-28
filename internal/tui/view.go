@@ -188,10 +188,14 @@ func cutNote(n *tree.Node) string {
 		out = "   ⇢ 1 turn moved to " + shortID(n.MovedTo)
 	case n.MovedTo != "" && n.CutHere+n.CutAfter > 1:
 		out = fmt.Sprintf("   ⇢ %d turns moved to %s", n.CutHere+n.CutAfter, shortID(n.MovedTo))
-	case n.CutHere > 0:
-		out = fmt.Sprintf("   ✂ %d turns dropped before this", n.CutHere)
-	case n.CutAfter > 0:
-		out = fmt.Sprintf("   ✂ %d turns dropped after this", n.CutAfter)
+	default:
+		// Both can land on one row from two drops along the replaces chain.
+		if n.CutHere > 0 {
+			out = fmt.Sprintf("   ✂ %d turns dropped before this", n.CutHere)
+		}
+		if n.CutAfter > 0 {
+			out += fmt.Sprintf("   ✂ %d turns dropped after this", n.CutAfter)
+		}
 	}
 	if n.MovedFrom != "" {
 		out += "   ⇠ moved from " + shortID(n.MovedFrom)

@@ -59,6 +59,11 @@ obvious from it.
   branch hangs off the resolved line, not the one the user saw.
 - **A branch renders from where it diverges;** its copied prefix is not drawn
   again. User choice.
+- **A row can carry a before-drop and an after-drop at once**, from two
+  records on the `replaces` chain (one anchored on it, one after the line's
+  end, which it has since become); `cutNote` shows both. An earlier note
+  called this unreachable: one record carries at most one cut, but a chain
+  carries several.
 - **Labels follow their turn along the `replaces` chain, and `L` clears older
   versions' label for that turn.** User choice; clearing must work on an
   inherited label.
@@ -160,8 +165,6 @@ obvious from it.
 - `scrubbed` skips seed lines under 12 characters.
 - `b`'s guard lacks `p`'s `n.Node.ID == ""` clause (equivalent today).
 - `u.placing` is not cleared after `placeChosen` (harmless).
-- `cutNote` shows one marker if a node had both a before- and after-drop
-  (unreachable: one record carries at most one cut).
 - Performance: `buildLine` rebuilds a uuid map `Select` already built;
   `tree.Build`'s `nodeOf` rebuilds a node-id map per edge; a full
   `splicecheck` takes ~30 min because `Splice` re-parses per call.

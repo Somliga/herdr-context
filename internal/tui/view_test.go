@@ -1421,6 +1421,12 @@ func TestRenderRowShowsCutsAndRemovedOrigins(t *testing.T) {
 	if got := cutNote(end); got != "   ✂ 3 turns dropped after this" {
 		t.Fatalf("cutNote(CutAfter) = %q", got)
 	}
+	// Two drops along the replaces chain can land on one row: one anchored
+	// on it, one after the line's end, which it now is. Both show.
+	both := &tree.Node{Node: adapter.Node{ID: "t2", Title: "two", Kind: adapter.KindHuman}, SessionID: "s", IsSessionLeaf: true, CutHere: 2, CutAfter: 3}
+	if got := cutNote(both); got != "   ✂ 2 turns dropped before this   ✂ 3 turns dropped after this" {
+		t.Fatalf("cutNote(CutHere and CutAfter) = %q", got)
+	}
 	orphan := &tree.Node{Node: adapter.Node{ID: "b1", Title: "b"}, SessionID: "br", IsSessionRoot: true, FromRemoved: true}
 	// §5.3e: the marker belongs on the header, beside the id.
 	if got := headerLine(Row{Node: orphan}, 120); got != "br  from a removed stretch" {
