@@ -10,6 +10,25 @@ import (
 // ErrNothingLeft means a cut would remove every turn of the line.
 var ErrNothingLeft = errors.New("a cut must leave at least one turn")
 
+// stripUsage removes message.usage from a rehomed entry. A spliced line's
+// last reply must show no context number (§3.1/§3.2) until its next real
+// reply recomputes one — the old number is the pre-edit line's, not this
+// one's. Grafts are unaffected: GraftSeeded never calls this.
+func stripUsage(m map[string]any) map[string]any {
+	msg, ok := m["message"].(map[string]any)
+	if !ok || msg["usage"] == nil {
+		return m
+	}
+	stripped := make(map[string]any, len(msg))
+	for k, v := range msg {
+		if k != "usage" {
+			stripped[k] = v
+		}
+	}
+	m["message"] = stripped
+	return m
+}
+
 // A move is refused, nothing written, when it would put its turns back
 // where they are, when it would carry the preamble (which is no turn), and
 // when it is handed a seed: a move carries turns verbatim.
@@ -181,7 +200,7 @@ func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, err
 		if t := l.turn[u]; t >= a && t <= b {
 			continue
 		}
-		m := rehome(en, sid, dstCWD)
+		m := stripUsage(rehome(en, sid, dstCWD))
 		if u == after {
 			if seedLine != nil {
 				buf = append(append(buf, seedLine...), '\n')
@@ -306,7 +325,7 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 		if u == "" || !from.keep[u] || !carried(from, u) {
 			continue
 		}
-		m := renamed(rehome(en, sid, dstCWD), fresh).(map[string]any)
+		m := renamed(stripUsage(rehome(en, sid, dstCWD)), fresh).(map[string]any)
 		if u == from.firstOf(mt) {
 			m["parentUuid"] = orNull(l.lastOf(at))
 			if !same {
@@ -342,7 +361,7 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 		if u == "" || !l.keep[u] || carried(l, u) {
 			continue
 		}
-		m := rehome(en, sid, dstCWD)
+		m := stripUsage(rehome(en, sid, dstCWD))
 		switch u {
 		case next:
 			buf = append(buf, block...)

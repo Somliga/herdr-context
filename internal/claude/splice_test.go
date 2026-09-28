@@ -187,6 +187,32 @@ func TestTheLeafPointerFollowsTheEdit(t *testing.T) {
 	}
 }
 
+// A spliced line shows no context number until its next real reply (§3.1/
+// §3.2): the pre-edit usage on file no longer describes what this new line
+// reads, so Splice must strip message.usage from every entry it writes.
+func TestSpliceStripsUsageFromEveryWrittenEntry(t *testing.T) {
+	u := `"usage":{"input_tokens":100,"cache_read_input_tokens":50,"cache_creation_input_tokens":0,"output_tokens":9}`
+	lines := []string{
+		`{"type":"user","uuid":"u1","parentUuid":null,"sessionId":"S","cwd":"/repo","version":"2.1.278","message":{"role":"user","content":[{"type":"text","text":"one"}]}}`,
+		`{"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"S","cwd":"/repo","version":"2.1.278","requestId":"r1","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"reply one"}],` + u + `}}`,
+		`{"type":"user","uuid":"u2","parentUuid":"a1","sessionId":"S","cwd":"/repo","version":"2.1.278","message":{"role":"user","content":[{"type":"text","text":"two"}]}}`,
+		`{"type":"assistant","uuid":"a2","parentUuid":"u2","sessionId":"S","cwd":"/repo","version":"2.1.278","requestId":"r2","message":{"id":"m2","role":"assistant","content":[{"type":"text","text":"reply two"}],` + u + `}}`,
+	}
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, _, _ := spliced(t, p, adapter.Edit{From: "u1", To: "a1"}) // cut turn one, keep turn two
+	path, _ := filepath.Glob(filepath.Join(ProjectsDir(), "*", res.SessionID+".jsonl"))
+	es, skipped, err := ParseFile(path[0])
+	if err != nil || skipped > 0 {
+		t.Fatalf("spliced file does not parse: %v skipped=%d", err, skipped)
+	}
+	if got := contextTokens(es); got != 0 {
+		t.Fatalf("contextTokens on the spliced line = %d, want 0", got)
+	}
+}
+
 func TestSpliceRefuses(t *testing.T) {
 	t.Setenv("CLAUDE_PROJECTS_DIR", t.TempDir())
 	for name, c := range map[string]struct {
