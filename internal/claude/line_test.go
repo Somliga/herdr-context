@@ -50,6 +50,24 @@ func TestContextTokensCountsTheLastReplyOnce(t *testing.T) {
 	}
 }
 
+// A synthetic reply written after an interrupt carries usage that sums to
+// zero. It is not a real reply, so contextTokens must keep walking back past
+// it to the real number instead of reporting 0.
+func TestContextTokensSkipsAllZeroUsageAndKeepsWalking(t *testing.T) {
+	real := `"usage":{"input_tokens":2,"cache_read_input_tokens":800,"cache_creation_input_tokens":38,"output_tokens":9}`
+	zero := `"usage":{"input_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":0}`
+	lines := []string{
+		`{"type":"user","uuid":"p1","parentUuid":null,"sessionId":"S","message":{"role":"user","content":"hi"}}`,
+		`{"type":"assistant","uuid":"a1","parentUuid":"p1","sessionId":"S","requestId":"r1","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"x"}],` + real + `}}`,
+		`{"type":"user","uuid":"p2","parentUuid":"a1","sessionId":"S","message":{"role":"user","content":"interrupted"}}`,
+		`{"type":"assistant","uuid":"a2","parentUuid":"p2","sessionId":"S","requestId":"r2","message":{"id":"m2","role":"assistant","content":[{"type":"text","text":"y"}],` + zero + `}}`,
+	}
+	es := parseLines(t, lines)
+	if got := contextTokens(es); got != 840 {
+		t.Fatalf("contextTokens = %d, want 840 (skip the all-zero reply)", got)
+	}
+}
+
 func TestContextTokensIsZeroWithoutUsage(t *testing.T) {
 	es := parseLines(t, []string{
 		`{"type":"user","uuid":"p1","parentUuid":null,"sessionId":"S","message":{"role":"user","content":"hi"}}`,

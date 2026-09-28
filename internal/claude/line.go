@@ -78,7 +78,9 @@ func contextTokens(es []Entry) int {
 			break
 		}
 		if e.Type() == "assistant" {
-			if n, ok := usageTokens(e); ok {
+			// A synthetic reply after an interrupt carries usage that sums
+			// to 0: not a real reply, so keep walking back past it.
+			if n, ok := usageTokens(e); ok && n != 0 {
 				return n
 			}
 		}
