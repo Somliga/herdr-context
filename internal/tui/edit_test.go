@@ -191,6 +191,23 @@ func TestAnAgentThatStartsWorkingDuringTheSummaryStopsTheSplice(t *testing.T) {
 	}
 }
 
+// A cross-line move needs one id shared by its insert and its drop. If
+// crypto/rand fails, carryCmd must refuse the whole move rather than write
+// with a fabricated id.
+func TestCarryRefusesWhenRandFails(t *testing.T) {
+	old := randRead
+	randRead = func([]byte) (int, error) { return 0, errors.New("no entropy") }
+	defer func() { randRead = old }()
+
+	msg := carryCmd(nil, nil, editOp{}, editOp{}, nil)().(actionDoneMsg)
+	if msg.reload || msg.quit {
+		t.Fatalf("a failed id generation still went ahead: %+v", msg)
+	}
+	if !strings.Contains(msg.status, "could not make an edit id") {
+		t.Fatalf("status %q, want it to mention the id failure", msg.status)
+	}
+}
+
 func TestHerdrNotAnsweringRefusesTheEdit(t *testing.T) {
 	fa := &fakeAdapter{span: adapter.Span{First: 2, Last: 3}}
 	u, cmd := press(t, rangeUI(t, fa, &herdrLog{liveErr: errors.New("herdr agent list timed out")}), enter, down, enter)

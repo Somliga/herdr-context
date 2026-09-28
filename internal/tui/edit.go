@@ -666,11 +666,17 @@ func (u uiModel) putDown(at *tree.Node) (tea.Model, tea.Cmd) {
 	return u, carryCmd(u.a, u.st, ins, drop, u.live)
 }
 
+// randRead is crypto/rand.Read, indirected so a test can force the failure
+// newEditID must refuse the edit for, rather than write with a fabricated id.
+var randRead = rand.Read
+
 // newEditID is a fresh id for the records one edit writes.
-func newEditID() string {
+func newEditID() (string, error) {
 	b := make([]byte, 8)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	if _, err := randRead(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // carryCmd is a move into another line (§2.8): the source is asked first,
@@ -679,8 +685,11 @@ func newEditID() string {
 // first: if the drop fails, the turns are in two places, never in none.
 func carryCmd(a adapter.Adapter, st *store.Store, ins, drop editOp, live LiveFunc) tea.Cmd {
 	return func() tea.Msg {
-		ins.editID = newEditID()
-		drop.editID = ins.editID
+		id, err := newEditID()
+		if err != nil {
+			return actionDoneMsg{status: "could not make an edit id: " + err.Error() + " — nothing was written"}
+		}
+		ins.editID, drop.editID = id, id
 		if stale := changedElsewhere(st, drop.src.ID); stale != "" {
 			return actionDoneMsg{status: stale}
 		}
