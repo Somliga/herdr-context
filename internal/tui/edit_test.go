@@ -250,6 +250,36 @@ func TestInsertSplicesTheSummaryInAndKeepsWhatFollows(t *testing.T) {
 	}
 }
 
+// TestInsertCarriesTheSummarysTitle is §2.10 crossed with p's "merge here":
+// a titled summary's seed reads "⤶ merged from <src8>: <title>", and the new
+// record's store title is the summary's title, not its first raw line.
+func TestInsertCarriesTheSummarysTitle(t *testing.T) {
+	st := loadedStore(t)
+	st.AddSummary(store.Summary{Text: "Title: Add login screen\n\nstate: the login screen now exists",
+		SessionID: "other", FromTurn: "a", ToTurn: "b"})
+	fa := &fakeAdapter{span: adapter.Span{First: 1, Last: 1}}
+	h := &herdrLog{}
+	u := uiModel{m: New(session("s", "t1", "t2", "t3")), a: fa, st: st, repoRoot: "/repo",
+		live: h.live, closePane: h.close}
+	u.m.Cursor = 0
+	u, _ = press(t, u, key('p'), enter)
+	u, _ = press(t, u, enter)
+	u, cmd := press(t, u, enter)
+	cmd()
+
+	if len(fa.spliced) != 1 {
+		t.Fatalf("spliced %+v", fa.spliced)
+	}
+	e := fa.spliced[0]
+	want := claudeSummaryPrefix + " " + shortID("other") + ": Add login screen"
+	if firstLineOf(e.Seed) != want {
+		t.Fatalf("seed first line %q, want %q", firstLineOf(e.Seed), want)
+	}
+	if got := u.st.Branches["spliced-sid"].Title; got != "⤶ Add login screen" {
+		t.Fatalf("branch title %q, want %q", got, "⤶ Add login screen")
+	}
+}
+
 // p places a summary that already exists: its failure says nothing about one
 // being kept.
 func TestAFailedPlacementByPSaysNothingAboutAStoredSummary(t *testing.T) {

@@ -464,6 +464,16 @@ func parseTitle(text string) (title, body string, ok bool) {
 	return t, after, true
 }
 
+// summaryTitle is the one-line label a fold-back's Branch.Title is built
+// from: the summary's own title line (§2.10) when it has one, its first
+// line otherwise.
+func summaryTitle(text string) string {
+	if t, _, ok := parseTitle(text); ok {
+		return title(t, 40)
+	}
+	return title(text, 40)
+}
+
 // foldBackSeed composes the injected turn's text.
 //
 // A summary of a DIFFERENT session arriving here is an import: knowledge came
@@ -487,6 +497,9 @@ func foldBackSeed(at *tree.Node, sum store.Summary, rewinding bool) string {
 			return claudeCompactionPrefix + ": " + t + "\n\n" + body
 		}
 		return claudeCompactionPrefix + " " + shortID(sum.FromTurn) + ".." + shortID(sum.ToTurn) + "\n\n" + sum.Text
+	}
+	if t, body, ok := parseTitle(sum.Text); ok {
+		return claudeSummaryPrefix + " " + shortID(sum.SessionID) + ": " + t + "\n\n" + body
 	}
 	return claudeSummaryPrefix + " " + shortID(sum.SessionID) + "\n\n" + sum.Text
 }
@@ -542,7 +555,7 @@ func foldBackCmd(a adapter.Adapter, st *store.Store, at *tree.Node, sp adapter.S
 		}
 		st.Add(sid, store.Branch{
 			GraftedFrom: store.From{SessionID: at.SessionID, Node: sp.EndNode},
-			Title:       "⤶ " + title(sum.Text, 40),
+			Title:       "⤶ " + summaryTitle(sum.Text),
 			CreatedAt:   time.Now().UTC(),
 		})
 		if err := st.Save(); err != nil {

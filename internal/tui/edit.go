@@ -230,7 +230,7 @@ func squashCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) (su
 	summarise = summariseCmd(a, st, op, func() string { return changedElsewhere(st, op.src.ID) })
 	commit = func(sum store.Summary) tea.Cmd {
 		op.edit.Seed = foldBackSeed(op.from, sum, true)
-		op.title = "⤶ " + title(sum.Text, 40)
+		op.title = "⤶ " + summaryTitle(sum.Text)
 		return editCmd(a, st, op, live)
 	}
 	return summarise, commit
@@ -549,7 +549,7 @@ func (u uiModel) placeChosen(idx int) (tea.Model, tea.Cmd) {
 		// Nothing is removed, so nothing contracted: a merge is always marked
 		// as knowledge arriving, whatever session the summary came from.
 		op := editOp{src: src, edit: adapter.Edit{After: at.Node.ID, Seed: foldBackSeed(at, sum, false)}, kind: store.KindInserted,
-			dst: u.dstCWD(at), title: "⤶ " + title(sum.Text, 40)}
+			dst: u.dstCWD(at), title: "⤶ " + summaryTitle(sum.Text)}
 		return editCmd(u.a, u.st, op, u.live)
 	}
 	sp, err := u.a.Widen(src, at.Node.ID, at.Node.ID)

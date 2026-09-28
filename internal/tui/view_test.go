@@ -704,6 +704,47 @@ func TestFoldBackAtAnEarlierTurnSeedsAGraft(t *testing.T) {
 	}
 }
 
+// TestFoldBackGraftCarriesATitle is §2.10 crossed with p's "branch here": a
+// titled summary's seed AND the new record's store title both carry it, not
+// just the seed used for the untitled case above.
+func TestFoldBackGraftCarriesATitle(t *testing.T) {
+	fa := &fakeAdapter{}
+	st := loadedStore(t)
+	at := New(session("s", "t1", "t2")).Rows()[0].Node
+	sum := store.Summary{Text: "Add login screen\n\nstate: the login screen now exists",
+		SessionID: "other", FromTurn: "a", ToTurn: "b"}
+
+	foldBackCmd(fa, st, at, entrySpan(at.Node.ID), "/repo", sum, "", nil)()
+
+	wantFirst := claudeSummaryPrefix + " " + shortID(sum.SessionID) + ": Add login screen"
+	if firstLineOf(fa.seededWith) != wantFirst {
+		t.Fatalf("seed first line %q, want %q", firstLineOf(fa.seededWith), wantFirst)
+	}
+	if got := st.Branches["new-sid"].Title; got != "⤶ Add login screen" {
+		t.Fatalf("branch title %q, want %q", got, "⤶ Add login screen")
+	}
+}
+
+// TestFoldBackSendToLiveTipCarriesATitle is §2.10 crossed with p's
+// send-to-live-tip landing.
+func TestFoldBackSendToLiveTipCarriesATitle(t *testing.T) {
+	fa := &fakeAdapter{}
+	st := loadedStore(t)
+	rows := New(session("s", "t1", "t2")).Rows()
+	tip := rows[len(rows)-1].Node
+	sum := store.Summary{Text: "Add login screen\n\nstate: the login screen now exists",
+		SessionID: "other", FromTurn: "a", ToTurn: "b"}
+
+	var gotText string
+	send := func(agent, text string) error { gotText = text; return nil }
+	foldBackCmd(fa, st, tip, entrySpan(tip.Node.ID), "/repo", sum, "tree-agent", send)()
+
+	wantFirst := claudeSummaryPrefix + " " + shortID(sum.SessionID) + ": Add login screen"
+	if firstLineOf(gotText) != wantFirst {
+		t.Fatalf("sent first line %q, want %q", firstLineOf(gotText), wantFirst)
+	}
+}
+
 func TestFoldBackOfThisLinesOwnSummaryIsMarkedAsCompaction(t *testing.T) {
 	// Compaction is fold-back with the range's own line as the destination.
 	// Only the prefix distinguishes the two, and the classifier and the
@@ -1300,6 +1341,41 @@ func TestFoldBackSeedKeepsTodaysFormatWhenUntitled(t *testing.T) {
 
 	got := foldBackSeed(at, sum, true)
 	want := claudeCompactionPrefix + " " + shortID("t5") + ".." + shortID("t12") + "\n\n" + sum.Text
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestFoldBackSeedImportCarriesATitle is §2.10 crossed with an import: a
+// titled summary arriving from a DIFFERENT session must carry its title into
+// "⤶ merged from <src8>: <title>" too, not just the compaction form.
+func TestFoldBackSeedImportCarriesATitle(t *testing.T) {
+	at := &tree.Node{Node: adapter.Node{ID: "t20"}, SessionID: "s1", IsSessionLeaf: true}
+	sum := store.Summary{SessionID: "other", FromTurn: "a", ToTurn: "b",
+		Text: "Add login screen\n\nstate: the login screen now exists"}
+
+	got := foldBackSeed(at, sum, false)
+	wantFirst := claudeSummaryPrefix + " " + shortID(sum.SessionID) + ": Add login screen"
+	if firstLineOf(got) != wantFirst {
+		t.Fatalf("first line %q, want %q", firstLineOf(got), wantFirst)
+	}
+	if strings.Count(got, "Add login screen") != 1 {
+		t.Fatalf("the title line must not also appear in the body: %q", got)
+	}
+	if !strings.Contains(got, "state: the login screen now exists") {
+		t.Fatalf("the body lost the summary: %q", got)
+	}
+}
+
+// TestFoldBackSeedImportKeepsTodaysFormatWhenUntitled is the import side of
+// §2.10's fallback: an untitled summary keeps the whole-session marker plus
+// the whole text, unchanged.
+func TestFoldBackSeedImportKeepsTodaysFormatWhenUntitled(t *testing.T) {
+	at := &tree.Node{Node: adapter.Node{ID: "t20"}, SessionID: "s1", IsSessionLeaf: true}
+	sum := store.Summary{SessionID: "other", FromTurn: "a", ToTurn: "b", Text: "state: done\nnext: ship"}
+
+	got := foldBackSeed(at, sum, false)
+	want := claudeSummaryPrefix + " " + shortID(sum.SessionID) + "\n\n" + sum.Text
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
