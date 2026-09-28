@@ -895,7 +895,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// entry: n may be an unanswered prompt row.
 				src := adapter.Session{ID: n.SessionID, CWD: n.SessionCWD, Path: n.SessionPath}
 				var err error
-				if sp, err = u.a.Widen(src, n.Node.ID, n.Node.ID); err != nil {
+				if sp, err = u.a.WidenBranch(src, n.Node.ID); err != nil {
 					u.status = "cannot branch from here: " + err.Error()
 					return u, nil
 				}
@@ -918,7 +918,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			src := adapter.Session{ID: n.SessionID, CWD: n.SessionCWD, Path: n.SessionPath}
 			// Graft after the WHOLE turn n is in (§2.5b), not at n's own
 			// entry: n may be an unanswered prompt row.
-			sp, err := u.a.Widen(src, n.Node.ID, n.Node.ID)
+			sp, err := u.a.WidenBranch(src, n.Node.ID)
 			if err != nil {
 				u.status = "cannot continue from here: " + err.Error()
 				return u, nil

@@ -39,11 +39,39 @@ func Widen(srcPath, from, to string) (adapter.Span, error) {
 	if err != nil {
 		return adapter.Span{}, err
 	}
+	return l.widen(from, to)
+}
+
+func (l *line) widen(from, to string) (adapter.Span, error) {
 	a, b, err := l.span(from, to)
 	if err != nil {
 		return adapter.Span{}, err
 	}
 	return adapter.Span{First: a, Last: b, End: l.lastOf(b), EndNode: l.lastNodeOf(b), Turns: l.last}, nil
+}
+
+// WidenBranch is Widen for a branch at node (§2.5b): node's whole turn on the
+// session's current line, or, when node is not on it — before a native
+// /compact, or on a stretch the session rewound away from — its whole turn on
+// the line node is on, ending at tipReaching. A branch only reads the file,
+// so a turn the current line no longer holds is still somewhere to branch
+// from; an edit, which rewrites the current line, refuses it. If no line
+// through node can be found, the span is node itself.
+func WidenBranch(srcPath, node string) (adapter.Span, error) {
+	l, err := parseForEdit(srcPath)
+	if err != nil {
+		return adapter.Span{}, err
+	}
+	if _, on := l.turn[node]; !on {
+		tip := tipReaching(l.es, node)
+		if tip == "" {
+			return adapter.Span{End: node, EndNode: node}, nil
+		}
+		if l, err = buildLineAt(l.es, tip); err != nil {
+			return adapter.Span{}, err
+		}
+	}
+	return l.widen(node, node)
 }
 
 // Splice writes a new session holding srcPath's current line with e applied:

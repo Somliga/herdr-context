@@ -653,3 +653,33 @@ func TestAMoveRenewsServerAndMCPToolIDs(t *testing.T) {
 		}
 	}
 }
+
+// A turn before a native /compact is not on the session's current line, so
+// an edit refuses it, but a branch only reads the file: WidenBranch widens it
+// on the line it is on, the pre-compact one (§2.5b).
+func TestWidenBranchReachesATurnBeforeANativeCompact(t *testing.T) {
+	for _, path := range []string{compacted, "testdata/compacted-preorigin.jsonl"} {
+		if _, err := Widen(path, "u1", "u1"); !errors.Is(err, ErrNotOnLine) {
+			t.Fatalf("%s: Widen err %v, want ErrNotOnLine", path, err)
+		}
+		for node, want := range map[string]adapter.Span{
+			"u1": {First: 1, Last: 1, End: "a1", EndNode: "a1", Turns: 2},
+			"a2": {First: 2, Last: 2, End: "a2", EndNode: "a2", Turns: 2},
+			"u3": {First: 1, Last: 1, End: "a3", EndNode: "a3", Turns: 2},
+		} {
+			got, err := WidenBranch(path, node)
+			if err != nil || got != want {
+				t.Errorf("%s: WidenBranch(%s) = %+v, %v; want %+v", path, node, got, err, want)
+			}
+		}
+	}
+}
+
+// The same holds on a stretch the session rewound away from: x1 in
+// splice.jsonl hangs off a1, and its line ends at xa1.
+func TestWidenBranchReachesARewoundStretch(t *testing.T) {
+	sp, err := WidenBranch("testdata/splice.jsonl", "x1")
+	if err != nil || sp.End != "xa1" {
+		t.Fatalf("WidenBranch(x1) = %+v, %v; want it to end at xa1", sp, err)
+	}
+}

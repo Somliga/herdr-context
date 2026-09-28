@@ -525,7 +525,7 @@ func (u uiModel) placeChosen(idx int) (tea.Model, tea.Cmd) {
 		// branch here (§2.5b): graft after at's whole turn, not at's own
 		// entry. When at is already the turn's last entry (the common case
 		// for a live tip), Widen is a no-op.
-		sp, err := u.a.Widen(src, at.Node.ID, at.Node.ID)
+		sp, err := u.a.WidenBranch(src, at.Node.ID)
 		if err != nil {
 			u.status = "cannot branch here: " + err.Error()
 			return u, nil

@@ -1559,3 +1559,127 @@ func TestAPastedSummaryDeliveredToTheTipIsRecognised(t *testing.T) {
 		t.Fatalf("style = %v, want StyleImport, rendering %q", style, line)
 	}
 }
+
+// fixture copies one of internal/claude's transcripts into the world as sid,
+// its session id and cwd rewritten.
+func (w *world) fixture(sid, name string) {
+	w.t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "claude", "testdata", name))
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	s := strings.ReplaceAll(string(b), `"sessionId":"S"`, `"sessionId":"`+sid+`"`)
+	s = strings.ReplaceAll(s, `"cwd":"/repo"`, `"cwd":"`+w.repo+`"`)
+	dir := filepath.Join(w.proj, claude.SlugFor(w.repo))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		w.t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, sid+".jsonl"), []byte(s), 0o600); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// history is sid's transcript as the agent resumes it: its uuids in file
+// order and its leaf pointer.
+func (w *world) history(sid string) (uuids []string, leaf string) {
+	w.t.Helper()
+	es, _, err := claude.ParseFile(w.path(sid))
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	for _, e := range es {
+		if u := e.UUID(); u != "" {
+			uuids = append(uuids, u)
+		}
+		if e.Type() == "last-prompt" {
+			leaf, _ = e.Raw["leafUuid"].(string)
+		}
+	}
+	return uuids, leaf
+}
+
+// branchOff is the one session recorded as grafted from sid.
+func (w *world) branchOff(sid string) string {
+	w.t.Helper()
+	st, err := store.Load(w.repo)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	for id, b := range st.Branches {
+		if b.GraftedFrom.SessionID == sid {
+			return id
+		}
+	}
+	w.t.Fatalf("no branch off %s", shortID(sid))
+	return ""
+}
+
+// A turn before a native /compact has a row, and every way of branching from
+// it works: the branch resumes the pre-compact history through the end of
+// that turn. It is not on the session's current line, so an edit of it is
+// still refused (§2.5b).
+func TestScenarioBranchingFromBeforeANativeCompact(t *testing.T) {
+	for _, fx := range []string{"compacted.jsonl", "compacted-preorigin.jsonl"} {
+		for _, how := range []string{"continue", "b", "branch here"} {
+			t.Run(fx+"/"+how, func(t *testing.T) {
+				w := newWorld(t)
+				w.fixture(sidT, fx)
+				if how == "branch here" {
+					st, _ := store.Load(w.repo)
+					st.AddSummary(store.Summary{Text: "the fixed summary", SessionID: sidU, FromTurn: "x", ToTurn: "y", CreatedAt: w.clock})
+					if err := st.Save(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				u := cursorTo(t, w.open(sidT), sidT, "u1")
+				want := "u1,a1"
+				switch how {
+				case "continue":
+					u = drive(t, u, enter)
+					if !strings.Contains(u.confirm, "Continue from") {
+						t.Fatalf("no confirmation: %q", u.status)
+					}
+					u = drive(t, u, enter)
+				case "b":
+					u = drive(t, u, key('b'))
+				case "branch here":
+					u = drive(t, u, key('p'), enter, down, enter)
+					if !strings.Contains(u.confirm, "Branch at") {
+						t.Fatalf("no branch here confirmation: %q", u.status)
+					}
+					u = drive(t, u, enter)
+				}
+				br := w.branchOff(sidT)
+				uuids, leaf := w.history(br)
+				got := strings.Join(uuids, ",")
+				if how == "branch here" {
+					if len(uuids) != 3 || leaf != uuids[2] {
+						t.Fatalf("branch holds %s, leaf %s: want u1,a1 and the seed as leaf (status %q)", got, leaf, u.status)
+					}
+					got = strings.Join(uuids[:2], ",")
+				} else if leaf != "a1" {
+					t.Fatalf("branch leaf %s, want a1", leaf)
+				}
+				if got != want {
+					t.Fatalf("branch holds %s, want %s (status %q)", got, want, u.status)
+				}
+				checkLines(t, w.open(sidT), sidT, br) // the family: it hangs off T
+			})
+		}
+	}
+}
+
+func TestScenarioAnEditBeforeANativeCompactIsStillRefused(t *testing.T) {
+	w := newWorld(t)
+	w.fixture(sidT, "compacted.jsonl")
+	u := cursorTo(t, w.open(sidT), sidT, "a1")
+	u = drive(t, u, key('s'))
+	u = cursorTo(t, u, sidT, "u1")
+	u = drive(t, u, enter, enter) // the range menu, squash
+	if u.confirm != "" || !strings.Contains(u.status, "not on this session's current line") {
+		t.Fatalf("squash before the boundary: confirm %q, status %q", u.confirm, u.status)
+	}
+	if w.summaries() != 0 {
+		t.Fatal("a refused squash was paid for")
+	}
+}

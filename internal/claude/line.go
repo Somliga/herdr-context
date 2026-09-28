@@ -52,8 +52,59 @@ func opensTurn(e Entry, hasOrigin bool) bool {
 	return keep && (k == adapter.KindHuman || k == adapter.KindSummaryImport || k == adapter.KindSummaryCompaction)
 }
 
-func buildLine(es []Entry) (*line, error) {
-	tip := tipOf(es)
+func buildLine(es []Entry) (*line, error) { return buildLineAt(es, tipOf(es)) }
+
+// tipReaching is the latest entry, in file order, that tipOf could take as a
+// tip and whose ancestor chain holds node: the end of the line node is on,
+// which for an entry before a native /compact or on a rewound stretch is not
+// the session's own tip. "" if there is none.
+func tipReaching(es []Entry, node string) string {
+	byUUID := make(map[string]Entry, len(es))
+	for _, e := range es {
+		if u := e.UUID(); u != "" {
+			byUUID[u] = e
+		}
+	}
+	// reaches memoises every entry walked, so the scan is linear; an entry
+	// is marked false while it is being walked, which also stops a cycle.
+	reaches := map[string]bool{}
+	walk := func(from string) bool {
+		var path []string
+		found := false
+		for cur := from; cur != ""; cur = byUUID[cur].ParentUUID() {
+			if cur == node {
+				found = true
+				break
+			}
+			if v, seen := reaches[cur]; seen {
+				found = v
+				break
+			}
+			if _, ok := byUUID[cur]; !ok {
+				break
+			}
+			reaches[cur] = false
+			path = append(path, cur)
+		}
+		for _, u := range path {
+			reaches[u] = found
+		}
+		return found
+	}
+	for i := len(es) - 1; i >= 0; i-- {
+		e := es[i]
+		if e.UUID() == "" || e.IsSidechain() {
+			continue
+		}
+		if t := e.Type(); (t == "user" || t == "assistant") && walk(e.UUID()) {
+			return e.UUID()
+		}
+	}
+	return ""
+}
+
+// buildLineAt is buildLine for the line that ends at tip.
+func buildLineAt(es []Entry, tip string) (*line, error) {
 	if tip == "" {
 		return nil, ErrNodeNotFound
 	}

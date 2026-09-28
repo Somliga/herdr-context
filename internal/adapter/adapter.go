@@ -73,6 +73,9 @@ type Adapter interface {
 	Summarise(src Session, fromTurn, toTurn string) (string, error)
 	// Widen reports what a range covers once widened to whole turns.
 	Widen(src Session, fromNode, toNode string) (Span, error)
+	// WidenBranch is Widen for a branch at one node: its whole turn, on the
+	// line through node when that is not the session's current line.
+	WidenBranch(src Session, node string) (Span, error)
 	// Splice writes a new session with e applied to src's current line. The
 	// source is never modified.
 	Splice(src Session, e Edit, dstCWD string) (Spliced, error)

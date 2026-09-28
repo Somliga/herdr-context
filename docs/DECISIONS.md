@@ -34,6 +34,14 @@ obvious from it.
   (`Span.EndNode`), not its last entry, which is often a `turn_duration` system
   entry that is no row. Old edges that name a non-node are healed in `Build`
   by falling back to the last copied turn.
+- **A branch works from any turn, an edit only from the current line.** ⏎,
+  `b` and branch here widen through `WidenBranch`: a turn not on the
+  session's current line (before a native `/compact`, or on a rewound stretch)
+  is widened on the line it is on — the one ending at the latest entry whose
+  ancestor chain holds it — and the graft carries that history. Squash, drop
+  and move keep `Widen` and refuse such turns: they rewrite the current line,
+  which does not hold them. Why: a branch only reads the file, and branching
+  from before a `/compact` worked before whole-turn widening broke it.
 
 ## Store and tree
 
@@ -134,8 +142,8 @@ obvious from it.
 - Parked: the cross-line relabel does not unwrap a `<pasted_content>`-wrapped
   `⤶ squashed`. Unreachable today: only the live-tip send produces a wrapper,
   and it always sends the `⤶ merged from` form.
-- Pre-`/compact` turns render but every edit on them is refused; consider
-  marking or hiding them.
+- Pre-`/compact` turns render and can be branched from, but squash, drop and
+  move on them are refused; consider marking them.
 - `parseTitle` takes a first line like `state: …` followed by a blank line as
   the title if the model skips the title.
 - `server_tool_use` / `mcp_tool_use` ids are not renewed on a cross-line move.

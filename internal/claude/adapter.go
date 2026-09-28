@@ -100,6 +100,10 @@ func (claudeAdapter) Widen(src adapter.Session, fromNode, toNode string) (adapte
 	return Widen(sourcePath(src), fromNode, toNode)
 }
 
+func (claudeAdapter) WidenBranch(src adapter.Session, node string) (adapter.Span, error) {
+	return WidenBranch(sourcePath(src), node)
+}
+
 func (claudeAdapter) Splice(src adapter.Session, e adapter.Edit, dstCWD string) (adapter.Spliced, error) {
 	return Splice(sourcePath(src), e, dstCWD)
 }

@@ -183,6 +183,9 @@ func (f *fakeAdapter) Summarise(src adapter.Session, fromTurn, toTurn string) (s
 func (f *fakeAdapter) Widen(adapter.Session, string, string) (adapter.Span, error) {
 	return f.span, nil
 }
+func (f *fakeAdapter) WidenBranch(adapter.Session, string) (adapter.Span, error) {
+	return f.span, nil
+}
 func (f *fakeAdapter) Splice(src adapter.Session, e adapter.Edit, _ string) (adapter.Spliced, error) {
 	f.writes = append(f.writes, "splice "+src.ID)
 	f.splices++
