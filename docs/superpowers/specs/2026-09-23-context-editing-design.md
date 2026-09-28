@@ -256,6 +256,21 @@ For **squash** and **squash into…**, after the confirmation:
 
 The summary is shown only in this view — never in a status line.
 
+### 2.10 A squash names itself
+
+The squash prompt asks the model to begin its reply with one line — a title of
+at most 8 words describing the stretch — then a blank line, then the summary.
+No extra call. The seed's first line becomes `⤶ squashed: <title>` (a moved
+one, §2.8, `⤶ merged from <source8>: <title>`); the review view (§2.9) shows
+the title above the summary. If the first line is empty, longer than 80
+characters, or not followed by a blank line, it is not a title: the seed keeps
+`⤶ squashed <from8>..<to8>` and the whole reply is the summary. Only new
+squashes get titles; existing rows are left as they are.
+
+A row shows `▸` and its folded count only when it has something of its own
+folded under it (BodyCount > 0); a head whose only children are the next turn
+or a branch is not drawn as foldable.
+
 ## 3. The splice
 
 `claude.Splice`, next to `GraftSeeded` in `internal/claude/graft.go`.
