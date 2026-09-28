@@ -155,7 +155,8 @@ func Discover(repoRoot string) ([]adapter.Session, error) {
 			Nodes:   Entries(es),
 			// A skipped line means the chain may have holes. Surface it as ⚠
 			// rather than rendering a partial conversation as if complete.
-			Broken: skipped > 0,
+			Broken:        skipped > 0,
+			ContextTokens: contextTokens(es),
 		})
 	}
 	// Stable so sessions with identical mtimes keep a deterministic order.

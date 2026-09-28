@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -70,6 +71,12 @@ type squashing struct {
 	since, now  time.Time      // summarising: its start and the latest tick
 	sum         *store.Summary // set once made: the review
 	scroll      int
+	// ctxBefore is the source line's context number at confirm time (§3.2),
+	// 0 when unknown — the estimate is then omitted. ctxRange and ctxLine
+	// are the widened range's and the whole line's marshalled bytes, used to
+	// estimate what the squash saves once the summary's length is known.
+	ctxBefore         int
+	ctxRange, ctxLine int64
 }
 
 // summarisedMsg is a squash's summary, made and stored: the review opens.
@@ -120,9 +127,9 @@ func (u uiModel) summarisingView() string {
 // its width, and the box given the rows the rest leaves. scroll is the
 // stored one, clamped to what this layout can show.
 type reviewParts struct {
-	header, title, then, footer string
-	lines                       []string
-	show, scroll                int
+	header, title, then, context, footer string
+	lines                                []string
+	show, scroll                         int
 }
 
 func (u uiModel) reviewLayout() reviewParts {
@@ -160,17 +167,23 @@ func (u uiModel) reviewLayout() reviewParts {
 		// The border and a space of padding on each side.
 		lines: strings.Split(wrap(text, max(width-4, 10)), "\n"),
 	}
+	if sq.ctxBefore > 0 && sq.ctxLine > 0 {
+		ratio := float64(sq.ctxRange) / float64(sq.ctxLine)
+		est := float64(sq.ctxBefore)*(1-ratio) + float64(len(sq.sum.Text))/4
+		p.context = wrap("context "+humanTokens(sq.ctxBefore)+" → ~"+humanTokens(int(math.Round(est))), width)
+	}
 	footer := "↑↓ scroll  ⏎ commit  esc cancel (summary kept for p)"
 	fit := func(f string) {
 		p.footer = wrap(f, width)
 		// Besides the parts: a blank under the header, the box's two
 		// borders, a blank above the footer. The title, when present, adds
-		// its own line plus the blank that separates it from the box.
+		// its own line plus the blank that separates it from the box. The
+		// context estimate, when present, adds its own line.
 		titleRows := 0
 		if p.title != "" {
 			titleRows = rows(p.title) + 1
 		}
-		p.show = max(height-rows(p.header)-titleRows-rows(p.then)-rows(p.footer)-4, 3)
+		p.show = max(height-rows(p.header)-titleRows-rows(p.then)-rows(p.context)-rows(p.footer)-4, 3)
 	}
 	fit(footer)
 	if len(p.lines) > p.show {
@@ -193,7 +206,11 @@ func (u uiModel) reviewView() string {
 	if p.title != "" {
 		title = p.title + "\n\n"
 	}
-	return p.header + "\n\n" + title + box + "\n" + p.then + "\n\n" + p.footer + "\n"
+	ctx := ""
+	if p.context != "" {
+		ctx = "\n" + p.context
+	}
+	return p.header + "\n\n" + title + box + "\n" + p.then + ctx + "\n\n" + p.footer + "\n"
 }
 
 // reviewKey is a key in the review: ⏎ runs the rest of the squash, esc
@@ -460,7 +477,8 @@ func (u uiModel) editConfirm(kind string) (tea.Model, tea.Cmd) {
 	op.summarise = true
 	summarise, commit := squashCmd(u.a, u.st, op, u.live)
 	u.pending, u.pendingBusy = summarise, "summarising…"
-	u.squash = &squashing{first: sp.First, last: sp.Last, src: src.ID, figures: figures, then: then, commit: commit}
+	u.squash = &squashing{first: sp.First, last: sp.Last, src: src.ID, figures: figures, then: then, commit: commit,
+		ctxBefore: from.SessionTokens, ctxRange: sp.RangeBytes, ctxLine: sp.LineBytes}
 	return u, nil
 }
 

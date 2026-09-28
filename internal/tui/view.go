@@ -60,6 +60,20 @@ func title(text string, max int) string {
 	return string(r[:max-1]) + "…"
 }
 
+// humanTokens formats a context number for the header and squash review
+// (§3.2): <1k below 1000, "12k" rounded to the nearest thousand below 1M,
+// "1.2M" at or above it.
+func humanTokens(n int) string {
+	switch {
+	case n < 1000:
+		return "<1k"
+	case n < 1_000_000:
+		return fmt.Sprintf("%dk", (n+500)/1000)
+	default:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+}
+
 func humanBytes(n int64) string {
 	switch {
 	case n >= 1<<20:
@@ -155,6 +169,9 @@ func headerLine(r Row, width int) string {
 		b.WriteString("↳ ")
 	}
 	b.WriteString(shortID(r.Node.SessionID))
+	if r.Node.SessionTokens > 0 {
+		b.WriteString(" · " + humanTokens(r.Node.SessionTokens))
+	}
 	if r.Node.FromRemoved {
 		b.WriteString("  from a removed stretch")
 	}

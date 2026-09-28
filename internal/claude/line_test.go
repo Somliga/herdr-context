@@ -2,6 +2,9 @@ package claude
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +19,44 @@ func mustLine(t *testing.T, path string) *line {
 		t.Fatal(err)
 	}
 	return l
+}
+
+// parseLines writes lines to a temp file and parses it, so a test can build a
+// transcript inline instead of keeping another testdata fixture.
+func parseLines(t *testing.T, lines []string) []Entry {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(p, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	es, skipped, err := ParseFile(p)
+	if err != nil || skipped > 0 {
+		t.Fatalf("parse: %v skipped=%d", err, skipped)
+	}
+	return es
+}
+
+func TestContextTokensCountsTheLastReplyOnce(t *testing.T) {
+	u := `"usage":{"input_tokens":2,"cache_read_input_tokens":800,"cache_creation_input_tokens":38,"output_tokens":9}`
+	lines := []string{
+		`{"type":"user","uuid":"p1","parentUuid":null,"sessionId":"S","message":{"role":"user","content":"hi"}}`,
+		`{"type":"assistant","uuid":"a1","parentUuid":"p1","sessionId":"S","requestId":"r1","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"x"}],` + u + `}}`,
+		`{"type":"assistant","uuid":"a2","parentUuid":"a1","sessionId":"S","requestId":"r1","message":{"id":"m1","role":"assistant","content":[{"type":"tool_use","id":"t","name":"Bash","input":{}}],` + u + `}}`,
+		`{"type":"system","subtype":"turn_duration","uuid":"d1","parentUuid":"a2","sessionId":"S"}`,
+	}
+	es := parseLines(t, lines)
+	if got := contextTokens(es); got != 840 {
+		t.Fatalf("contextTokens = %d, want 840 (one reply, counted once)", got)
+	}
+}
+
+func TestContextTokensIsZeroWithoutUsage(t *testing.T) {
+	es := parseLines(t, []string{
+		`{"type":"user","uuid":"p1","parentUuid":null,"sessionId":"S","message":{"role":"user","content":"hi"}}`,
+	})
+	if got := contextTokens(es); got != 0 {
+		t.Fatalf("contextTokens = %d, want 0", got)
+	}
 }
 
 // The tip is a conversation entry, never a sidechain or bookkeeping one.

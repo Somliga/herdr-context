@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"errors"
 
 	"herdr-tree/internal/adapter"
@@ -53,6 +54,61 @@ func opensTurn(e Entry, hasOrigin bool) bool {
 }
 
 func buildLine(es []Entry) (*line, error) { return buildLineAt(es, tipOf(es)) }
+
+// contextTokens is what the line ending at tipOf(es) currently reads (§3.1):
+// the last assistant entry on the tip's chain that carries message.usage,
+// summed as input + cache_read + cache_creation tokens. 0 if the chain has
+// none — a new branch, a squashed line not yet replied to, or an older
+// transcript format. Split entries of one reply share one usage; walking
+// back from the tip and stopping at the first one found counts it once.
+func contextTokens(es []Entry) int {
+	tip := tipOf(es)
+	if tip == "" {
+		return 0
+	}
+	byUUID := make(map[string]Entry, len(es))
+	for _, e := range es {
+		if u := e.UUID(); u != "" {
+			byUUID[u] = e
+		}
+	}
+	for cur := tip; cur != ""; {
+		e, ok := byUUID[cur]
+		if !ok {
+			break
+		}
+		if e.Type() == "assistant" {
+			if n, ok := usageTokens(e); ok {
+				return n
+			}
+		}
+		cur = e.ParentUUID()
+	}
+	return 0
+}
+
+// usageTokens is an assistant entry's message.usage, summed, if it has one.
+// A transcript is decoded with json.Decoder.UseNumber (large ints must not
+// become float64), so each field is a json.Number, not a float64.
+func usageTokens(e Entry) (int, bool) {
+	msg, _ := e.Raw["message"].(map[string]any)
+	if msg == nil {
+		return 0, false
+	}
+	usage, ok := msg["usage"].(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	sum := 0.0
+	for _, k := range []string{"input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"} {
+		if n, ok := usage[k].(json.Number); ok {
+			if f, err := n.Float64(); err == nil {
+				sum += f
+			}
+		}
+	}
+	return int(sum), true
+}
 
 // tipReaching is the latest entry, in file order, that tipOf could take as a
 // tip and whose ancestor chain holds node: the end of the line node is on,

@@ -120,6 +120,30 @@ func TestRenderRowMarksGraft(t *testing.T) {
 	}
 }
 
+// §3.2 of the undo/redo and context meter spec: the header carries the
+// line's context size after the id, absent when unknown.
+func TestHeaderShowsTheContextNumber(t *testing.T) {
+	// Depth: 1, like a real grafted node (always a child): headerDepth
+	// would go negative, and strings.Repeat panic, at the root depth 0 a
+	// grafted node cannot actually be at.
+	n := &tree.Node{SessionID: "1a2b3c4d-x", IsSessionRoot: true, Grafted: true, SessionTokens: 84210}
+	if got := headerLine(Row{Node: n, Depth: 1}, 80); got != "↳ 1a2b3c4d · 84k" {
+		t.Fatalf("header %q", got)
+	}
+	n.SessionTokens = 0
+	if got := headerLine(Row{Node: n, Depth: 1}, 80); got != "↳ 1a2b3c4d" {
+		t.Fatalf("no number when unknown: %q", got)
+	}
+}
+
+func TestHumanTokens(t *testing.T) {
+	for n, want := range map[int]string{999: "<1k", 1000: "1k", 84210: "84k", 889384: "889k", 1_234_000: "1.2M"} {
+		if got := humanTokens(n); got != want {
+			t.Fatalf("humanTokens(%d) = %q, want %q", n, got, want)
+		}
+	}
+}
+
 // fakeAdapter lets the update loop be tested without Herdr or Claude. Its
 // methods record what they were asked to do: a graft and a summary are both
 // real work with real cost, so the assertions that matter are about which of

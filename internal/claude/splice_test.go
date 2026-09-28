@@ -668,6 +668,9 @@ func TestWidenBranchReachesATurnBeforeANativeCompact(t *testing.T) {
 			"u3": {First: 1, Last: 1, End: "a3", EndNode: "a3", Turns: 2},
 		} {
 			got, err := WidenBranch(path, node)
+			// RangeBytes/LineBytes are not this test's concern; zero them
+			// before comparing the rest of the span.
+			got.RangeBytes, got.LineBytes = 0, 0
 			if err != nil || got != want {
 				t.Errorf("%s: WidenBranch(%s) = %+v, %v; want %+v", path, node, got, err, want)
 			}

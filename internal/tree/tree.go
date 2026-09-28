@@ -20,6 +20,7 @@ type Node struct {
 	// field exists to prevent.
 	SessionPath   string
 	SessionTitle  string
+	SessionTokens int // the line's context number (§3.1); 0 = unknown
 	IsSessionRoot bool
 	IsSessionLeaf bool // the last turn of this session's own chain
 	Grafted       bool // this node starts a session branched from its parent
@@ -148,6 +149,7 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 		if len(sess.Nodes) == 0 {
 			n := &Node{
 				SessionID: sess.ID, SessionCWD: sess.CWD, SessionPath: sess.Path, SessionTitle: sess.Title,
+				SessionTokens: sess.ContextTokens,
 				IsSessionRoot: true, IsSessionLeaf: true, Broken: true,
 			}
 			chains[sess.ID] = n
@@ -158,6 +160,7 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 			n := &Node{
 				Node: t, SessionID: sess.ID, SessionCWD: sess.CWD,
 				SessionPath: sess.Path, SessionTitle: sess.Title,
+				SessionTokens: sess.ContextTokens,
 				IsSessionRoot: i == 0,
 				IsSessionLeaf: i == len(sess.Nodes)-1,
 				Broken:        sess.Broken,

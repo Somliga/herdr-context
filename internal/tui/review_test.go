@@ -11,6 +11,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"herdr-tree/internal/adapter"
+	"herdr-tree/internal/store"
+	"herdr-tree/internal/tree"
 )
 
 // run is what cmd sends back. A confirmed squash batches its work with the
@@ -250,6 +252,42 @@ func TestAStaleTickDoesNotRunASecondClock(t *testing.T) {
 	}
 	if _, tc = u.Update(tickMsg{u.ticks, u.squash.since.Add(time.Second)}); tc == nil {
 		t.Fatal("the second squash's own tick was dropped")
+	}
+}
+
+// §3.2 of the undo/redo and context meter spec: the review estimates what a
+// squash will save, from the source session's context number and the
+// range's byte share of the line.
+func TestReviewShowsTheContextEstimate(t *testing.T) {
+	sess := adapter.Session{ID: "s", Title: "s", CWD: "/repo", Path: "/transcripts/s.jsonl", ContextTokens: 84000}
+	for _, id := range []string{"t1", "t2", "t3"} {
+		sess.Nodes = append(sess.Nodes, adapter.Node{ID: id, Title: "turn " + id, Kind: adapter.KindHuman})
+	}
+	roots := tree.Build([]adapter.Session{sess}, &store.Store{Version: 1, Branches: map[string]store.Branch{}})
+
+	fa := &fakeAdapter{summary: strings.Repeat("x", 400)}
+	fa.span = adapter.Span{First: 2, Last: 3, RangeBytes: 600, LineBytes: 1000}
+	h := &herdrLog{}
+	u := uiModel{m: New(roots), a: fa, st: loadedStore(t), repoRoot: "/repo", live: h.live, closePane: h.close}
+	u.m.Cursor = 2
+	next, _ := u.Update(key('s'))
+	u = next.(uiModel)
+	u.m.Cursor = 1
+	u, _ = press(t, u, enter, enter)
+	u, cmd := press(t, u, enter)
+	u = review(t, u, cmd)
+	if !strings.Contains(flat(u.View()), "context 84k → ~34k") {
+		t.Fatalf("review lacks the context estimate:\n%s", u.View())
+	}
+}
+
+// A line with no known context number gets no estimate line.
+func TestReviewOmitsTheContextEstimateWhenUnknown(t *testing.T) {
+	fa := &fakeAdapter{summary: "it went well"}
+	u, cmd := squashed(t, fa, &herdrLog{})
+	u = review(t, u, cmd)
+	if strings.Contains(flat(u.View()), "context ") {
+		t.Fatalf("review shows an estimate with no known context:\n%s", u.View())
 	}
 }
 

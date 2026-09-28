@@ -49,6 +49,9 @@ type Session struct {
 	Nodes   []Node // ordered root -> leaf
 	Live    bool   // a process currently holds it
 	Broken  bool   // transcript present but unreadable
+	// ContextTokens is what the line's last reply read (§3.1 of the
+	// undo/redo and context meter spec): 0 means unknown, never estimated.
+	ContextTokens int
 }
 
 // Pane is what Herdr reports about the invoking pane.
@@ -106,6 +109,10 @@ type Span struct {
 	// often not one (Claude Code ends a turn with a system entry), and an
 	// edge must name a node for tree.Build to hang the branch on it.
 	EndNode string
+	// RangeBytes and LineBytes are the marshalled size of the widened range
+	// and of the whole current line, used only to estimate a squash's
+	// context saving (§3.2).
+	RangeBytes, LineBytes int64
 }
 
 // Spliced is what a splice wrote.

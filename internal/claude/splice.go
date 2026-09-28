@@ -47,7 +47,41 @@ func (l *line) widen(from, to string) (adapter.Span, error) {
 	if err != nil {
 		return adapter.Span{}, err
 	}
-	return adapter.Span{First: a, Last: b, End: l.lastOf(b), EndNode: l.lastNodeOf(b), Turns: l.last}, nil
+	rangeBytes, lineBytes, err := l.byteShares(a, b)
+	if err != nil {
+		return adapter.Span{}, err
+	}
+	return adapter.Span{
+		First: a, Last: b, End: l.lastOf(b), EndNode: l.lastNodeOf(b), Turns: l.last,
+		RangeBytes: rangeBytes, LineBytes: lineBytes,
+	}, nil
+}
+
+// byteShares is the marshalled size (plus a newline) of every kept entry —
+// lineBytes — and of the ones whose turn falls in a..b — rangeBytes. Used
+// only to estimate a squash's saving (§3.2); no other consumer needs bytes
+// per turn, so this is not memoised on line.
+func (l *line) byteShares(a, b int) (rangeBytes, lineBytes int64, err error) {
+	for _, e := range l.es {
+		u := e.UUID()
+		if u == "" || !l.keep[u] {
+			continue
+		}
+		t, ok := l.turn[u]
+		if !ok {
+			continue
+		}
+		enc, err := Marshal(e)
+		if err != nil {
+			return 0, 0, err
+		}
+		size := int64(len(enc)) + 1
+		lineBytes += size
+		if t >= a && t <= b {
+			rangeBytes += size
+		}
+	}
+	return rangeBytes, lineBytes, nil
 }
 
 // WidenBranch is Widen for a branch at node (§2.5b): node's whole turn on the
