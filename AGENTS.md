@@ -16,6 +16,7 @@ behaviour is in `README.md`.
 | `docs/DECISIONS.md` | Current. The rulings that shape the code, and the deferred minors. |
 | `docs/superpowers/specs/2026-09-23-context-editing-design.md` | **Current binding spec** (v3), with amendments; its status block says what no longer binds. |
 | `docs/superpowers/plans/2026-09-23-context-editing.md` | Historical. The v3 plan's first nine tasks; later tasks were briefed outside it. |
+| `docs/superpowers/specs/2026-09-28-undo-and-context-meter-design.md` | Current. Undo/redo and the context meter; amends the context-editing spec (§4). |
 | `docs/superpowers/specs/2026-09-22-timeline-design.md` | Partly superseded. v2 timeline: summaries, fold-back, colours. v3 overrides §4, §5, §2's "never marked" trunk and §6b's "no trunk style". |
 | `docs/superpowers/plans/2026-09-22-timeline-v2.md` | Historical. v2 plan. |
 | `docs/superpowers/specs/2026-09-21-herdr-tree-design.md` | Partly superseded. v1: discovery, store, adapter boundary, grafting. Its TUI section and keys are replaced. |
@@ -48,10 +49,11 @@ Key files and functions:
 - `internal/claude/summarise.go` — `CompactPrompt`, `Summarise` (`claude -p --resume` on a throwaway graft, timeout, stderr scrubbed).
 - `internal/claude/discover.go` — `Discover`, `ProjectsDir` (`CLAUDE_PROJECTS_DIR` overrides).
 - `internal/herdr/herdr.go` — `AgentState` (pane + `agent_status`), `AgentForSession`, `AgentPrompt`, `ClosePane`, `Split`, `AgentStart`, `checkArg`.
-- `internal/store/store.go` — `Load`, `Save` (merge with disk, `replaced_by` one-way), `Replace`, `Resolve`, `ReplacedOnDisk`, `Versions`, `SetLabel`, `AddSummary`.
-- `internal/tree/tree.go` — `Build`: hiding replaced lines, re-attaching branches through `Resolve`, `attachPoint`, drop/move markers along the `replaces` chain.
+- `internal/store/store.go` — `Load`, `Save` (merge with disk, `replaced_by` one-way), `Replace`, `Current` (skips undone versions), `CurrentOnDisk`, `Lineage`, `Group` (a move's two records), `Versions`, `SetLabel`, `AddSummary`.
+- `internal/tree/tree.go` — `Build`: hiding replaced lines, re-attaching branches through `Current`, `attachPoint`, drop/move markers along the `replaces` chain.
 - `internal/tui/view.go` — `Update` (all key handling), `View` (rows, header lines, path bar, footer), `renderRow`, `headerLine`, `cutNote`, `foldBackSeed`, `parseTitle`, `scrubbed`, `Run`.
 - `internal/tui/edit.go` — `editConfirm`, `squashCmd`, `editCmd` (re-checks then splice), `changedElsewhere`, `busy`, `openTip` / `handoverCmd`, `placeChosen`, `foldAt`, `pickUp` / `putDown` / `carryCmd`, the summarising and review views.
+- `internal/tui/undo.go` — `undoCmd` / `redoCmd` / `toggle` (`u` / `U`; a move group together; rolled back if `Save` fails).
 - `internal/tui/model.go` — `Model`: `Rows`, folding, `Window`, ranges, `ScopeTo`, `RevealTip`.
 
 ## Hard rules
@@ -107,7 +109,8 @@ headers and always-indented branches; ⏎ continue / `b` branch; squash with
 summarising view, review and titles; drop; single-section move within and
 across lines; `p` merge here / branch here / send to the live tip; live
 handover on ⏎; busy and changed-elsewhere refusals; labels that follow their
-turn. Live-verified by the user: splice resume, ⏎ handover, merge then
+turn; `u`/`U` undo and redo per line; the context meter on headers and in
+the squash review. Live-verified by the user: splice resume, ⏎ handover, merge then
 continue, and delivery to a live tip (one message, wrapped in
 `<pasted_content>`, now unwrapped by the classifier).
 

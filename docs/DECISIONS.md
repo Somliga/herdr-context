@@ -58,14 +58,26 @@ obvious from it.
 - **A splice replaces the line: `replaced_by` on the old record, a new record
   carrying a copy of the old `grafted_from`.** Why: the replacement takes the
   old line's place. Hidden only if the replacement's file exists.
-- **`replaced_by` is one-way in `Save`'s merge.** Why: another overlay's save
-  must not un-hide a replaced line.
+- **`replaced_by` is one-way in `Save`'s merge, except toward an undone
+  replacement:** when both sides name one and they differ, the not-undone one
+  wins. Why: another overlay's save must not un-hide a replaced line, and undo
+  plus a new edit is the one thing that rewrites `replaced_by`. `undone` merges
+  by `undone_at` (later wins).
+- **Undo marks the new version `undone`; nothing is deleted.** `Current` skips
+  undone replacements. A move's two records share an `edit` id and toggle
+  together; refused if either line was edited since. Redo is refused if a
+  partner line has moved on.
+- **The context number is the last reply's usage on the current line**
+  (input + cache read + cache creation), counted once per reply, skipping
+  all-zero synthetic replies. `Splice` strips `usage` from what it writes, so a
+  freshly edited line shows no number. Grafts keep theirs: a branch shows its
+  fork point's real size. Cost: if that reads as wrong, strip in grafts too.
 - **An edit re-reads the store from disk before paying and before splicing, and
   refuses if a line it writes was replaced elsewhere.** Why: two overlays on
   one line silently produced an unmarked duplicate. Cost: a short race window
   remains (below).
 - **`b`/branch here from a replaced line is not refused.** A graft writes
-  nothing to the old line and `Build` re-hangs it via `Resolve`. Cost: the
+  nothing to the old line and `Build` re-hangs it via `Current`. Cost: the
   branch hangs off the resolved line, not the one the user saw.
 - **A branch renders from where it diverges;** its copied prefix is not drawn
   again. User choice.
@@ -125,7 +137,7 @@ obvious from it.
   reports a live agent with no status.
 - **A herdr error blocks even a plain ⏎ resume.** Fail closed. Cost: one
   refused ⏎ during a herdr hiccup.
-- **Scope follows `Resolve(current)`; sending still targets only the agent
+- **Scope follows `Current(current)`; sending still targets only the agent
   actually running** `current`, never a resolved session.
 
 ## Prompts
@@ -161,7 +173,7 @@ obvious from it.
 - A short race remains between the last changed-elsewhere check and the
   splice's `Save` (needs a lock or compare-and-swap); a drop's check sits
   before the `live()` query rather than right before `Splice`.
-- A corrupt `tree.json` loads as empty, so `ReplacedOnDisk` reads it as "not
+- A corrupt `tree.json` loads as empty, so `CurrentOnDisk` reads it as "not
   replaced".
 - Parked: the cross-line relabel does not unwrap a `<pasted_content>`-wrapped
   `⤶ squashed`. Unreachable today: only the live-tip send produces a wrapper,
@@ -182,6 +194,7 @@ obvious from it.
 - The handover's "already gone" status also covers a different-pane case.
 - `scrubbed` skips seed lines under 12 characters.
 - `b`'s guard lacks `p`'s `n.Node.ID == ""` clause (equivalent today).
+- Undo: `UndoneAt` is `omitempty` (should be `omitzero`, so a zero time is written); `undone_at` stays after redo; a failed `Save` leaves its disk merge applied to other records in memory; `Lineage` is O(records × chain). Per-kind undo scenarios (drop, merge, same-line move) share squash's path and have no test of their own.
 - `u.placing` is not cleared after `placeChosen` (harmless).
 - Performance: `buildLine` rebuilds a uuid map `Select` already built;
   `tree.Build`'s `nodeOf` rebuilds a node-id map per edge; a full

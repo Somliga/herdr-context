@@ -43,6 +43,7 @@ go build -o bin/herdr-tree.exe ./cmd/herdr-tree
 | s | **Select** a range: fixes its end here; move to its start and press `s` or ⏎ to open `squash · drop` |
 | m | **Move** this turn (one section): ⏎ puts it after the turn under the cursor, esc puts it back |
 | p | **Place a summary** at this turn: pick a stored summary, then merge here / branch here |
+| u / U | **Undo / redo** this line's last edit (squash, drop, move, merge). As deep as the line's history goes; a move across two lines undoes on both |
 | L | Label this turn (empty clears) |
 | a | Scope: this session's family ↔ all sessions |
 | f | Filter: all entries ↔ only what a person typed |
@@ -54,7 +55,9 @@ in progress it changes to say so.
 ## What you see
 
 - **Session headers.** Each session's first row has a header line above it:
-  `<id>` for a root line, `↳ <id>` for a branch. A branch whose turn was
+  `<id>` for a root line, `↳ <id>` for a branch, then the line's context size
+  (`↳ 1a2b3c4d · 84k`): what its last reply read. No number until a line has
+  a reply of its own, so a freshly edited line shows none. A branch whose turn was
   squashed or dropped away shows as a root marked `from a removed stretch`.
 - **Your path.** A cyan `▎` in the left margin marks every row on the path to
   the session you are in. The default scope is that session's family: its root
@@ -82,7 +85,8 @@ Select a range with `s`, press ⏎, choose **squash**.
    warns that the call is already billed; a second one leaves it running and
    closes the overlay.
 3. **Review.** The summary is shown in full, with its title above it and what
-   will happen below it. `⏎` commits; `esc` cancels — nothing is written, and
+   will happen below it, with the context estimate (`context 84k → ~31k`)
+   when the line has a number. `⏎` commits; `esc` cancels — nothing is written, and
    the summary stays stored for `p`.
 
 On commit a new session replaces the line: the stretch becomes one
