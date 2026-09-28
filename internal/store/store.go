@@ -234,10 +234,6 @@ func (s *Store) Replace(oldSID, newSID string, b Branch) {
 	s.Add(newSID, b)
 }
 
-// Resolve is a thin alias for Current, kept for callers until Task 2
-// migrates them.
-func (s *Store) Resolve(sessionID string) string { return s.Current(sessionID) }
-
 // Current is the version of sid's line that is shown: follow replaced_by
 // forward through versions that are not undone; from an undone version,
 // first step back through replaces to one that is not.

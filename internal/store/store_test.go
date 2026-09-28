@@ -359,18 +359,18 @@ func TestReplacingALineWithNoRecordCreatesOne(t *testing.T) {
 	}
 }
 
-func TestResolveFollowsReplacementsAndSurvivesACycle(t *testing.T) {
+func TestCurrentFollowsReplacementsAndSurvivesACycle(t *testing.T) {
 	s := &Store{Branches: map[string]Branch{
 		"a": {ReplacedBy: "b"}, "b": {ReplacedBy: "c"},
 		"x": {ReplacedBy: "y"}, "y": {ReplacedBy: "x"},
 	}}
-	if got := s.Resolve("a"); got != "c" {
-		t.Fatalf("Resolve(a) = %q, want c", got)
+	if got := s.Current("a"); got != "c" {
+		t.Fatalf("Current(a) = %q, want c", got)
 	}
-	if got := s.Resolve("q"); got != "q" {
-		t.Fatalf("Resolve of an unknown session = %q, want itself", got)
+	if got := s.Current("q"); got != "q" {
+		t.Fatalf("Current of an unknown session = %q, want itself", got)
 	}
-	s.Resolve("x") // must return, not hang
+	s.Current("x") // must return, not hang
 }
 
 // A second overlay that loaded before the replacement and saves something

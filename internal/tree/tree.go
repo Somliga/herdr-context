@@ -133,7 +133,8 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 	}
 	hidden := map[string]bool{}
 	for id, br := range s.Branches {
-		if br.ReplacedBy != "" && present[s.Resolve(id)] {
+		if (br.ReplacedBy != "" && !s.Branches[br.ReplacedBy].Undone && present[s.Current(id)]) ||
+			(br.Undone && present[s.Current(id)]) {
 			hidden[id] = true
 		}
 	}
@@ -246,7 +247,7 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 		from := br.GraftedFrom.SessionID
 		resolved := from
 		if hidden[from] {
-			resolved = s.Resolve(from)
+			resolved = s.Current(from)
 		}
 		parentNodes, ok := nodeIndex[resolved]
 		if !ok {
@@ -288,7 +289,7 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 		for _, id := range s.Versions(sess.ID) {
 			if mv := s.Branches[id].MovedFrom; mv != nil {
 				if n := nodeIndex[sess.ID][mv.At]; n != nil {
-					n.MovedFrom = s.Resolve(mv.SessionID)
+					n.MovedFrom = s.Current(mv.SessionID)
 				}
 			}
 			cut := s.Branches[id].Cut
@@ -303,7 +304,7 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 			}
 			if n != nil && cut.To != "" {
 				// ponytail: a drop and a move on one anchor add up and read as a move
-				n.MovedTo = s.Resolve(cut.To)
+				n.MovedTo = s.Current(cut.To)
 			}
 		}
 	}

@@ -256,7 +256,7 @@ func TestAFailedDropAfterAGoodInsertKeepsTheCopy(t *testing.T) {
 	}
 	u = drive(t, cursorTo(t, u, sidU, "u1-r"), enter)
 	u1 := w.replacement(sidU)
-	if st, _ := store.Load(w.repo); st.Resolve(sidT) != sidT {
+	if st, _ := store.Load(w.repo); st.Current(sidT) != sidT {
 		t.Fatal("the source was dropped by its busy agent")
 	}
 	want := "moved into " + shortID(sidU) + ", but the source was not dropped: agent is working — wait for it to finish; nothing was written"
@@ -401,7 +401,7 @@ func TestAMoveWhoseDropIsNotRecordedSaysSo(t *testing.T) {
 	u.live = func(sid string) (string, string, error) {
 		// The drop's own check, right before it splices: the target is
 		// recorded by now.
-		if st, _ := store.Load(w.repo); sid == sidT && st.Resolve(sidU) != sidU {
+		if st, _ := store.Load(w.repo); sid == sidT && st.Current(sidU) != sidU {
 			if err := os.Chmod(dir, 0o500); err != nil {
 				t.Fatal(err)
 			}

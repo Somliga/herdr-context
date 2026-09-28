@@ -353,7 +353,7 @@ func (w *world) replacement(sid string) string {
 	if err != nil {
 		w.t.Fatal(err)
 	}
-	r := st.Resolve(sid)
+	r := st.Current(sid)
 	if r == sid {
 		w.t.Fatalf("%s was not replaced", shortID(sid))
 	}
@@ -949,8 +949,8 @@ func TestScenarioTwoOverlaysEditTheSameLine(t *testing.T) {
 	}
 	w.checkTranscripts(2)
 	st, _ := store.Load(w.repo)
-	if st.Resolve(sidT) != r1 || st.Branches[r1].Replaces != sidT {
-		t.Fatalf("store: T→%s, %s replaces %q", shortID(st.Resolve(sidT)), shortID(r1), st.Branches[r1].Replaces)
+	if st.Current(sidT) != r1 || st.Branches[r1].Replaces != sidT {
+		t.Fatalf("store: T→%s, %s replaces %q", shortID(st.Current(sidT)), shortID(r1), st.Branches[r1].Replaces)
 	}
 	if got := rowText(w.open(sidT), r1, "t3-p"); got == "" {
 		t.Fatalf("scoped to T, the first overlay's line does not show")
@@ -1006,8 +1006,8 @@ func TestAnEditIsRefusedIfItsLineIsReplacedDuringTheSummary(t *testing.T) {
 	}
 	w.checkTranscripts(2)
 	st, _ := store.Load(w.repo)
-	if st.Resolve(sidT) != r1 || len(st.Summaries) != 1 {
-		t.Fatalf("store: T→%s, %d summaries", shortID(st.Resolve(sidT)), len(st.Summaries))
+	if st.Current(sidT) != r1 || len(st.Summaries) != 1 {
+		t.Fatalf("store: T→%s, %d summaries", shortID(st.Current(sidT)), len(st.Summaries))
 	}
 }
 

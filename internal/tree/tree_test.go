@@ -680,3 +680,50 @@ func TestMoveMarkersNameTheOtherLine(t *testing.T) {
 		t.Fatalf("moved to %q, moved from %q; want dst2 and src1", to, from)
 	}
 }
+
+func TestUndoShowsThePreviousVersion(t *testing.T) {
+	st := &store.Store{Branches: map[string]store.Branch{}}
+	st.Replace("v1", "v2", store.Branch{Kind: store.KindCut})
+	st.Replace("v2", "v3", store.Branch{Kind: store.KindCompacted})
+	v3 := st.Branches["v3"]
+	v3.Undone = true
+	st.Branches["v3"] = v3
+	got := sessionsIn(Build([]adapter.Session{sess("v1", "t1"), sess("v2", "t1"), sess("v3", "t1")}, st))
+	if !got["v2"] || got["v1"] || got["v3"] {
+		t.Fatalf("shown %v, want only v2", got)
+	}
+}
+
+func TestABranchOffAnUndoneVersionStaysVisible(t *testing.T) {
+	st := &store.Store{Branches: map[string]store.Branch{
+		"br":   {GraftedFrom: store.From{SessionID: "v2", Node: "t1"}},
+		"gone": {GraftedFrom: store.From{SessionID: "v2", Node: "only-in-v2"}},
+	}}
+	st.Replace("v1", "v2", store.Branch{Kind: store.KindCompacted})
+	v2 := st.Branches["v2"]
+	v2.Undone = true
+	st.Branches["v2"] = v2
+	roots := Build([]adapter.Session{
+		sess("v1", "t1", "t2"), sess("v2", "t1", "only-in-v2"), sess("br", "b1"), sess("gone", "g1"),
+	}, st)
+	// br re-attaches under v1's t1; gone becomes a marked root
+	var brUnderV1, goneMarked bool
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		for _, c := range n.Children {
+			if n.SessionID == "v1" && n.Node.ID == "t1" && c.SessionID == "br" {
+				brUnderV1 = true
+			}
+			walk(c)
+		}
+	}
+	for _, r := range roots {
+		walk(r)
+		if r.SessionID == "gone" && r.FromRemoved {
+			goneMarked = true
+		}
+	}
+	if !brUnderV1 || !goneMarked {
+		t.Fatalf("brUnderV1=%v goneMarked=%v, want both", brUnderV1, goneMarked)
+	}
+}

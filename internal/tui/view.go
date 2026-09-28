@@ -285,7 +285,7 @@ func (u *uiModel) rebuild() {
 	// A replacement not on disk is not on screen either: keep the current.
 	scope := u.current
 	if u.st != nil {
-		if r := u.st.Resolve(u.current); ScopeTo(u.roots, r) != nil {
+		if r := u.st.Current(u.current); ScopeTo(u.roots, r) != nil {
 			scope = r
 		}
 	}
