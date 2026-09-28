@@ -8,8 +8,12 @@ another line, or place a stored summary anywhere.
 ## Install
 
 ```bash
-herdr plugin link /home/somliga/projects/herdr-tree
+herdr plugin install Somliga/herdr-tree
 ```
+
+Herdr builds the plugin on your machine during the install, so you need
+**Go 1.27 or later** on your `PATH` (Herdr reports a failed build but does
+not install Go for you). Linux and macOS. To update, run the install again.
 
 Then bind a key in `~/.config/herdr/config.toml`:
 
@@ -18,6 +22,14 @@ Then bind a key in `~/.config/herdr/config.toml`:
 key = "prefix+t"
 type = "plugin_action"
 command = "herdr-tree.open"
+```
+
+**Developing it:** link a checkout instead, and rebuild after changes —
+Herdr runs `./bin/herdr-tree.exe` from the linked directory:
+
+```bash
+herdr plugin link /path/to/herdr-tree
+go build -o bin/herdr-tree.exe ./cmd/herdr-tree
 ```
 
 ## Keys
