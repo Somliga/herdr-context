@@ -109,6 +109,27 @@ func toolLabel(e Entry) string {
 	return "[tool]"
 }
 
+// unwrapPaste undoes Claude Code's paste wrapper so a summary delivered to a
+// live agent can still be recognised by its prefix: leading whitespace, then
+// exactly one opening `<pasted_content id="…">` line, then an optional
+// trailing `</pasted_content>`. Anything else is returned unchanged, so
+// callers can tell "unwrapped" from "not that shape" by comparing to t.
+func unwrapPaste(t string) string {
+	if !strings.HasPrefix(t, "<pasted_content") {
+		return t
+	}
+	nl := strings.Index(t, "\n")
+	if nl < 0 {
+		return t
+	}
+	open := t[:nl]
+	if !strings.HasSuffix(open, ">") {
+		return t
+	}
+	rest := strings.TrimSuffix(strings.TrimRight(t[nl+1:], "\n"), "</pasted_content>")
+	return strings.TrimSpace(rest)
+}
+
 // Classify decides what an entry is and whether it belongs in the tree.
 // hasOrigin selects the authoritative path over the heuristic one.
 func Classify(e Entry, hasOrigin bool) (adapter.Kind, bool) {
@@ -141,6 +162,14 @@ func Classify(e Entry, hasOrigin bool) (adapter.Kind, bool) {
 		if strings.HasPrefix(t, CompactionPrefix) {
 			return adapter.KindSummaryCompaction, true
 		}
+		if u := unwrapPaste(t); u != t {
+			if strings.HasPrefix(u, SummaryPrefix) {
+				return adapter.KindSummaryImport, true
+			}
+			if strings.HasPrefix(u, CompactionPrefix) {
+				return adapter.KindSummaryCompaction, true
+			}
+		}
 		if hasOrigin {
 			return adapter.KindHuman, originKind(e) == "human"
 		}
@@ -166,7 +195,11 @@ func Entries(es []Entry) []adapter.Node {
 		if !keep {
 			continue
 		}
-		title := Title(e.Text(), 200)
+		text := e.Text()
+		if k == adapter.KindSummaryImport || k == adapter.KindSummaryCompaction {
+			text = unwrapPaste(strings.TrimSpace(text))
+		}
+		title := Title(text, 200)
 		if k == adapter.KindToolCall {
 			title = toolLabel(e)
 		}

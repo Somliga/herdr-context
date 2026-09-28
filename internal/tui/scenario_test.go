@@ -1504,3 +1504,58 @@ func TestASquashSeedStartsTheFirstSection(t *testing.T) {
 		t.Fatalf("t2 must follow the seed as its own section, at the same depth: %+v", next)
 	}
 }
+
+// A long typed-in message Claude Code delivers to a live agent is stored
+// wrapped in its paste marker, not as a bare ⤶ line (§2.5d). It must still
+// be recognised as a summary: an import row, its own section, titled by the
+// ⤶ line inside the wrapper.
+func TestAPastedSummaryDeliveredToTheTipIsRecognised(t *testing.T) {
+	w := newWorld(t)
+	w.trunk(sidT, "t1")
+
+	path := w.path(sidT)
+	es, _, err := claude.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tip := ""
+	for _, e := range es {
+		if u := e.UUID(); u != "" && (e.Type() == "user" || e.Type() == "assistant" || e.Type() == "attachment") {
+			tip = u
+		}
+	}
+	wantTitle := claudeSummaryPrefix + " 3510bb7c: Ranked options for belt-fryer HMI query performance"
+	text := "\n\n<pasted_content id=\"8aa6\">\n" + wantTitle + "\n\n**state**\n- No" + "\n</pasted_content>"
+	pasted := map[string]any{
+		"type": "user", "uuid": "s1", "parentUuid": tip, "sessionId": sidT, "cwd": w.repo,
+		"version": "2.1.278", "timestamp": w.tick(), "isSidechain": false, "userType": "external",
+		"origin":  map[string]any{"kind": "human"},
+		"message": map[string]any{"role": "user", "content": text},
+	}
+	reply := map[string]any{
+		"type": "assistant", "uuid": "s1-r", "parentUuid": "s1", "sessionId": sidT, "cwd": w.repo,
+		"version": "2.1.278", "timestamp": w.tick(), "isSidechain": false, "requestId": "req-s1",
+		"message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "text", "text": "reply s1"}}},
+	}
+	w.appendLines(path, []map[string]any{pasted, reply})
+
+	u := allOf(w.open(sidT))
+	i := rowOf(u, sidT, "s1")
+	if i < 0 {
+		t.Fatalf("no row for the pasted summary on screen:\n%s", strings.Join(screen(u), "\n"))
+	}
+	row := u.m.Rows()[i]
+	if row.Node.Node.Kind != adapter.KindSummaryImport {
+		t.Fatalf("kind = %v, want KindSummaryImport", row.Node.Node.Kind)
+	}
+	if row.Node.Node.Title != wantTitle {
+		t.Fatalf("title = %q, want %q", row.Node.Node.Title, wantTitle)
+	}
+	if !row.Node.IsHead {
+		t.Fatal("the pasted summary must open its own section")
+	}
+	line, style := renderRow(row, false, u.current, 0)
+	if style != StyleImport {
+		t.Fatalf("style = %v, want StyleImport, rendering %q", style, line)
+	}
+}

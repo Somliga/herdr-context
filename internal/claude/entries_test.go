@@ -251,3 +251,86 @@ func TestTurnTitleIsFirstLineTruncated(t *testing.T) {
 		t.Fatalf("got %q", got[2].Title)
 	}
 }
+
+// wrapPaste builds the plain-string content Claude Code writes when it
+// delivers a long typed-in message: leading blank lines, one
+// <pasted_content id="…"> opening line, the text, and — depending on the
+// case — a closing tag.
+func wrapPaste(text string, closeTag bool) string {
+	s := "\n\n<pasted_content id=\"8aa6\">\n" + text
+	if closeTag {
+		s += "\n</pasted_content>"
+	}
+	return s
+}
+
+func entryWithText(t *testing.T, uuid, text string, human bool) Entry {
+	t.Helper()
+	origin := ""
+	if human {
+		origin = `,"origin":{"kind":"human"}`
+	}
+	line := `{"type":"user","uuid":"` + uuid + `","parentUuid":null,"sessionId":"S"` + origin +
+		`,"message":{"role":"user","content":` + mustJSON(text) + `}}`
+	e, err := parseLine([]byte(line))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+func TestClassifyUnwrapsAPastedSummary(t *testing.T) {
+	text := wrapPaste(SummaryPrefix+" 3510bb7c: Ranked options for belt-fryer HMI query performance\n\n**state**\n- No", false)
+	e := entryWithText(t, "u1", text, true)
+	got, keep := Classify(e, true)
+	if !keep || got != adapter.KindSummaryImport {
+		t.Fatalf("got (%v, %v), want (KindSummaryImport, true)", got, keep)
+	}
+}
+
+func TestClassifyUnwrapsAPastedCompaction(t *testing.T) {
+	text := wrapPaste(CompactionPrefix+" t3..t9\n\nEight turns of auth work.", false)
+	e := entryWithText(t, "u1", text, true)
+	got, keep := Classify(e, true)
+	if !keep || got != adapter.KindSummaryCompaction {
+		t.Fatalf("got (%v, %v), want (KindSummaryCompaction, true)", got, keep)
+	}
+}
+
+func TestClassifyToleratesAClosingPastedContentTag(t *testing.T) {
+	text := wrapPaste(SummaryPrefix+" abc123: a merged summary", true)
+	e := entryWithText(t, "u1", text, true)
+	got, keep := Classify(e, true)
+	if !keep || got != adapter.KindSummaryImport {
+		t.Fatalf("got (%v, %v), want (KindSummaryImport, true)", got, keep)
+	}
+}
+
+func TestClassifyLeavesAnOrdinaryPasteAlone(t *testing.T) {
+	text := wrapPaste("just some notes I pasted in, nothing special", false)
+	e := entryWithText(t, "u1", text, true)
+	got, keep := Classify(e, true)
+	if !keep || got != adapter.KindHuman {
+		t.Fatalf("got (%v, %v), want (KindHuman, true) — an ordinary paste must stay human", got, keep)
+	}
+	title := Title(e.Text(), 200)
+	if title != `<pasted_content id="8aa6">` {
+		t.Fatalf("title of an ordinary paste changed: %q", title)
+	}
+}
+
+func TestEntriesTitlesAPastedSummaryByItsArrowLine(t *testing.T) {
+	text := wrapPaste(SummaryPrefix+" 3510bb7c: Ranked options for belt-fryer HMI query performance\n\n**state**\n- No", false)
+	e := entryWithText(t, "u1", text, true)
+	got := Entries([]Entry{e})
+	if len(got) != 1 {
+		t.Fatalf("got %d nodes want 1", len(got))
+	}
+	want := SummaryPrefix + " 3510bb7c: Ranked options for belt-fryer HMI query performance"
+	if got[0].Title != want {
+		t.Fatalf("title = %q, want %q", got[0].Title, want)
+	}
+	if got[0].Kind != adapter.KindSummaryImport {
+		t.Fatalf("kind = %v, want KindSummaryImport", got[0].Kind)
+	}
+}
