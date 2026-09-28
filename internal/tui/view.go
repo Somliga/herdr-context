@@ -265,6 +265,7 @@ type uiModel struct {
 	// squash is a squash or squash into… from its confirmation to its
 	// landing: summarising while busy, then the review (§2.9).
 	squash *squashing
+	ticks  int // the latest squash's clock; a tick for any other is dropped
 
 	// moving is move's picked-up section (§2.8), nil when none is in hand.
 	moving *carry
@@ -572,6 +573,12 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		u.width, u.height = msg.Width, msg.Height
+		if u.squash != nil && u.squash.sum != nil {
+			// A new width re-wraps the summary: keep the scroll inside it.
+			sq := *u.squash
+			sq.scroll = u.reviewLayout().scroll
+			u.squash = &sq
+		}
 	case summarisedMsg:
 		u.busy, u.abandoning = "", false
 		if u.squash != nil {
@@ -582,13 +589,13 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return u, nil
 	case tickMsg:
 		// Only the summarising view ticks; the summary arriving stops it.
-		if u.squash == nil || u.squash.sum != nil || u.busy == "" {
+		if msg.gen != u.ticks || u.squash == nil || u.squash.sum != nil || u.busy == "" {
 			return u, nil
 		}
 		sq := *u.squash
-		sq.now = time.Time(msg)
+		sq.now = msg.at
 		u.squash = &sq
-		return u, tick()
+		return u, tick(u.ticks)
 	case actionDoneMsg:
 		u.busy = ""
 		u.abandoning = false
@@ -729,8 +736,9 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					sq.since = time.Now()
 					sq.now = sq.since
 					u.squash = &sq
+					u.ticks++
 					// The work first: tests run it alone and drop the tick.
-					return u, tea.Batch(cmd, tick())
+					return u, tea.Batch(cmd, tick(u.ticks))
 				}
 				return u, cmd
 			case "esc", "q":

@@ -73,11 +73,16 @@ type squashing struct {
 // summarisedMsg is a squash's summary, made and stored: the review opens.
 type summarisedMsg struct{ sum store.Summary }
 
-// tickMsg advances the summarising view's spinner and clock.
-type tickMsg time.Time
+// tickMsg advances the summarising view's spinner and clock. gen is the
+// squash it was asked for, so a tick still in flight from an earlier one is
+// dropped rather than starting a second clock.
+type tickMsg struct {
+	gen int
+	at  time.Time
+}
 
-func tick() tea.Cmd {
-	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+func tick(gen int) tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg{gen, t} })
 }
 
 // summariseCmd is a squash up to its review: refused says why it may not
@@ -109,9 +114,16 @@ func (u uiModel) summarisingView() string {
 	return s
 }
 
-// reviewLines is the summary wrapped to the review box, and how many of its
-// lines the box shows at once.
-func (u uiModel) reviewLines() ([]string, int) {
+// reviewParts is the review laid out for the terminal: every part wrapped to
+// its width, and the box given the rows the rest leaves. scroll is the
+// stored one, clamped to what this layout can show.
+type reviewParts struct {
+	header, then, footer string
+	lines                []string
+	show, scroll         int
+}
+
+func (u uiModel) reviewLayout() reviewParts {
 	width, height := u.width, u.height
 	if width <= 0 {
 		width = 80
@@ -119,25 +131,47 @@ func (u uiModel) reviewLines() ([]string, int) {
 	if height <= 0 {
 		height = 24
 	}
-	// The border and a space of padding on each side.
-	text := lipgloss.NewStyle().Width(max(width-4, 10)).Render(u.squash.sum.Text)
-	// The header, a blank, the two borders, the Then: line, a blank, the footer.
-	return strings.Split(text, "\n"), max(height-7-strings.Count(u.squash.then, "\n"), 3)
+	// lipgloss pads every line to the width; only the box wants that.
+	wrap := func(s string, w int) string {
+		ls := strings.Split(lipgloss.NewStyle().Width(w).Render(s), "\n")
+		for i := range ls {
+			ls[i] = strings.TrimRight(ls[i], " ")
+		}
+		return strings.Join(ls, "\n")
+	}
+	rows := func(s string) int { return strings.Count(s, "\n") + 1 }
+	sq := u.squash
+	p := reviewParts{
+		header: wrap(fmt.Sprintf("Squash turns %d–%d — review the summary", sq.first, sq.last), width),
+		then:   wrap("Then: "+sq.then, width),
+		// The border and a space of padding on each side.
+		lines: strings.Split(wrap(sq.sum.Text, max(width-4, 10)), "\n"),
+	}
+	footer := "↑↓ scroll  ⏎ commit  esc cancel (summary kept for p)"
+	fit := func(f string) {
+		p.footer = wrap(f, width)
+		// Besides the parts: a blank under the header, the box's two
+		// borders, a blank above the footer.
+		p.show = max(height-rows(p.header)-rows(p.then)-rows(p.footer)-4, 3)
+	}
+	fit(footer)
+	if len(p.lines) > p.show {
+		// Fitted with the widest the position can be, then written as it is.
+		n := len(p.lines)
+		fit(footer + fmt.Sprintf(" · lines %d–%d of %d", n, n, n))
+		p.scroll = max(0, min(sq.scroll, n-p.show))
+		p.footer = wrap(footer+fmt.Sprintf(" · lines %d–%d of %d", p.scroll+1, p.scroll+p.show, n), width)
+	}
+	return p
 }
 
 // reviewView shows the summary just made, in full, before anything is
 // written (§2.9). It is the one place a summary is shown.
 func (u uiModel) reviewView() string {
-	sq := u.squash
-	lines, show := u.reviewLines()
-	end := min(sq.scroll+show, len(lines))
-	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Render(strings.Join(lines[sq.scroll:end], "\n"))
-	where := ""
-	if len(lines) > show {
-		where = fmt.Sprintf(" (lines %d–%d of %d)", sq.scroll+1, end, len(lines))
-	}
-	return fmt.Sprintf("Squash turns %d–%d — review the summary\n\n%s\nThen: %s\n\n↑↓ scroll%s   [enter] commit   [esc] cancel, the summary stays stored for p\n",
-		sq.first, sq.last, box, sq.then, where)
+	p := u.reviewLayout()
+	shown := p.lines[p.scroll:min(p.scroll+p.show, len(p.lines))]
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Render(strings.Join(shown, "\n"))
+	return p.header + "\n\n" + box + "\n" + p.then + "\n\n" + p.footer + "\n"
 }
 
 // reviewKey is a key in the review: ⏎ runs the rest of the squash, esc
@@ -145,7 +179,9 @@ func (u uiModel) reviewView() string {
 // other key is swallowed.
 func (u uiModel) reviewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	sq := *u.squash
-	lines, show := u.reviewLines()
+	p := u.reviewLayout()
+	sq.scroll = p.scroll
+	show := p.show
 	switch msg.String() {
 	case "up", "k":
 		sq.scroll--
@@ -163,7 +199,7 @@ func (u uiModel) reviewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		u.status = "cancelled — nothing was written; the summary is stored for p"
 		return u, nil
 	}
-	sq.scroll = max(0, min(sq.scroll, len(lines)-show))
+	sq.scroll = max(0, min(sq.scroll, len(p.lines)-show))
 	u.squash = &sq
 	return u, nil
 }
@@ -509,6 +545,9 @@ func (u uiModel) editConfirm(kind string) (tea.Model, tea.Cmd) {
 	cost := fmt.Sprintf("%s turns %d–%d:\n\n  from  %q\n  to    %q\n\nThe model reads this session up to the end of the range — %d turn(s) · %d entries · %s — and describes only the range. That whole prefix is billed.\n\nThen: ",
 		heading, sp.First, sp.Last, from.Node.Title, to.Node.Title, turns, entries, humanBytes(size))
 	figures := fmt.Sprintf("%d turns · %d entries · %s", turns, entries, humanBytes(size))
+	if turns == 1 {
+		figures = fmt.Sprintf("1 turn · %d entries · %s", entries, humanBytes(size))
+	}
 	if kind == kindFold {
 		// Target mode: nothing is paid or written until the target is
 		// confirmed (§2.7).

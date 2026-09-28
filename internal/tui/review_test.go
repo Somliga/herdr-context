@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"herdr-tree/internal/adapter"
 )
@@ -41,6 +42,10 @@ func commit(t *testing.T, u uiModel, cmd tea.Cmd) (uiModel, actionDoneMsg) {
 	return u, cmd().(actionDoneMsg)
 }
 
+// flat is s with its wrapping undone: every run of spaces and line breaks
+// one space.
+func flat(s string) string { return strings.Join(strings.Fields(s), " ") }
+
 // squashed is rangeUI's t2..t3 squash, confirmed: the summary is on its way.
 func squashed(t *testing.T, fa *fakeAdapter, h *herdrLog) (uiModel, tea.Cmd) {
 	t.Helper()
@@ -53,9 +58,9 @@ func TestASquashShowsTheSummaryBeforeItLands(t *testing.T) {
 	fa := &fakeAdapter{summary: "state: the tests pass\nnext: ship it"}
 	u, cmd := squashed(t, fa, &herdrLog{})
 	u = review(t, u, cmd)
-	v := u.View()
+	v := flat(u.View())
 	for _, want := range []string{"Squash turns 2–3 — review the summary", "state: the tests pass", "next: ship it",
-		"Then: turns 2–3 are replaced by the summary.\n" + replacesLine} {
+		flat("Then: turns 2–3 are replaced by the summary.\n" + replacesLine)} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("the review lacks %q:\n%s", want, v)
 		}
@@ -136,7 +141,7 @@ func TestSquashIntoIsReviewedBeforeItLandsAndDrops(t *testing.T) {
 		u := l.to(t, moveUI(t, fa, &herdrLog{}), fa)
 		u, cmd := press(t, u, enter)
 		u = review(t, u, cmd)
-		if v := u.View(); !strings.Contains(v, "it went well") || !strings.Contains(v, l.then) {
+		if v := flat(u.View()); !strings.Contains(v, "it went well") || !strings.Contains(v, l.then) {
 			t.Fatalf("%s: the review lacks the summary or %q:\n%s", l.name, l.then, v)
 		}
 		if got := strings.Join(fa.writes, ","); got != "summarise s" {
@@ -168,13 +173,13 @@ func TestTheSummarisingViewTicksUntilTheSummaryArrives(t *testing.T) {
 		t.Fatal("the summary does not start the clock")
 	}
 	v := u.View()
-	for _, want := range []string{"Summarising turns 2–3 of s", "the model is reading 1 turns · 2 entries · 3 B",
+	for _, want := range []string{"Summarising turns 2–3 of s", "the model is reading 1 turn · 2 entries · 3 B",
 		"⠋ 0s", "ctrl+c leaves (the call is already billed)"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("the summarising view lacks %q:\n%s", want, v)
 		}
 	}
-	next, tc := u.Update(tickMsg(u.squash.since.Add(3 * time.Second)))
+	next, tc := u.Update(tickMsg{u.ticks, u.squash.since.Add(3 * time.Second)})
 	u = next.(uiModel)
 	if v := u.View(); !strings.Contains(v, "⠸ 3s") || tc == nil {
 		t.Fatalf("a tick did not advance the clock or ask for the next one:\n%s", v)
@@ -186,7 +191,7 @@ func TestTheSummarisingViewTicksUntilTheSummaryArrives(t *testing.T) {
 	}
 	next, _ = u.Update(run(cmd))
 	u = next.(uiModel)
-	if _, tc = u.Update(tickMsg(u.squash.since.Add(4 * time.Second))); tc != nil {
+	if _, tc = u.Update(tickMsg{u.ticks, u.squash.since.Add(4 * time.Second)}); tc != nil {
 		t.Fatal("the clock ticks on after the summary")
 	}
 }
@@ -260,4 +265,92 @@ func TestNoStatusLineCarriesTheReviewedSummary(t *testing.T) {
 	u, cmd := squashed(t, &fakeAdapter{summary: sentinel}, &herdrLog{})
 	u, _ = press(t, review(t, u, cmd), esc)
 	check(u, "esc")
+}
+
+// A tick still in flight from one squash must not start a second clock on
+// the next.
+func TestAStaleTickDoesNotRunASecondClock(t *testing.T) {
+	fa := &fakeAdapter{summary: "it went well"}
+	u, cmd := squashed(t, fa, &herdrLog{})
+	stale := tickMsg{u.ticks, u.squash.since.Add(time.Second)}
+	u, _ = press(t, review(t, u, cmd), esc)
+	u.m.RangeEnd = u.m.Rows()[2].Node
+	u.m.Cursor = 1
+	u, _ = press(t, u, enter, enter)
+	u, _ = press(t, u, enter)
+	if u.squash == nil || u.busy == "" {
+		t.Fatalf("setup: the second squash is not summarising: %q", u.status)
+	}
+	next, tc := u.Update(stale)
+	if tc != nil || next.(uiModel).squash.now != u.squash.since {
+		t.Fatal("the first squash's tick moved the second one's clock")
+	}
+	if _, tc = u.Update(tickMsg{u.ticks, u.squash.since.Add(time.Second)}); tc == nil {
+		t.Fatal("the second squash's own tick was dropped")
+	}
+}
+
+func rowsOf(v string) []string { return strings.Split(strings.TrimSuffix(v, "\n"), "\n") }
+
+// The reviewer's case: scrolled to the bottom of a long paragraph in a
+// narrow terminal, then widened, which wraps it into far fewer lines.
+func TestAResizeWhileScrolledKeepsTheReviewOnTheSummary(t *testing.T) {
+	text := strings.Repeat("word ", 399) + "LASTWORD"
+	u, cmd := squashed(t, &fakeAdapter{summary: text}, &herdrLog{})
+	u.width, u.height = 40, 20
+	u = review(t, u, cmd)
+	for i := 0; i < 100; i++ {
+		u, _ = press(t, u, down)
+	}
+	if !strings.Contains(u.View(), "LASTWORD") {
+		t.Fatalf("setup: not scrolled to the bottom:\n%s", u.View())
+	}
+	// The view clamps for itself, before Update has seen the new size...
+	wide := u
+	wide.width = 300
+	if v := wide.View(); !strings.Contains(v, "LASTWORD") {
+		t.Fatalf("the last line is gone at the new width:\n%s", v)
+	}
+	// ...and the resize keeps the stored scroll inside the new wrap.
+	next, _ := u.Update(tea.WindowSizeMsg{Width: 300, Height: 20})
+	u = next.(uiModel)
+	if v := u.View(); !strings.Contains(v, "LASTWORD") {
+		t.Fatalf("the last line is gone after the resize:\n%s", v)
+	}
+	if u.squash.scroll != u.reviewLayout().scroll {
+		t.Fatalf("stored scroll %d outside the new layout", u.squash.scroll)
+	}
+}
+
+// However the parts wrap, the review fits the terminal and its header is on
+// the first row — for a squash and for squash into…'s longer Then: line.
+func TestTheReviewFitsTheScreen(t *testing.T) {
+	var long []string
+	for i := 1; i <= 60; i++ {
+		long = append(long, fmt.Sprintf("line %02d of the summary", i))
+	}
+	for _, size := range [][2]int{{60, 20}, {80, 24}} {
+		for _, summary := range []string{"short", strings.Join(long, "\n")} {
+			fa := &fakeAdapter{summary: summary}
+			u, cmd := squashed(t, fa, &herdrLog{})
+			u.width, u.height = size[0], size[1]
+			sq := review(t, u, cmd)
+			fa = &fakeAdapter{summary: summary}
+			u, _ = press(t, at(t, moveUI(t, fa, &herdrLog{}), "o1"), enter, down, enter)
+			u.width, u.height = size[0], size[1]
+			u, cmd = press(t, u, enter)
+			mv := review(t, u, cmd)
+			for _, r := range []uiModel{sq, mv} {
+				rows := rowsOf(r.View())
+				if len(rows) > size[1] || !strings.HasPrefix(rows[0], "Squash turns 2–3 — review the summary") {
+					t.Fatalf("%dx%d: %d rows, first %q:\n%s", size[0], size[1], len(rows), rows[0], r.View())
+				}
+				for _, row := range rows {
+					if w := lipgloss.Width(row); w > size[0] {
+						t.Fatalf("%dx%d: a row %d wide: %q", size[0], size[1], w, row)
+					}
+				}
+			}
+		}
+	}
 }
