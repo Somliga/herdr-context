@@ -4,6 +4,7 @@ package tui
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -429,6 +430,32 @@ func TestASquashMovedIntoAnotherLineIsRelabelled(t *testing.T) {
 	}
 	if got := rowText(u, t2, "t4-p"); !strings.Contains(got, "⇢ 1 turn moved to "+shortID(u1)) {
 		t.Errorf("where the ⤶ row was: %q", got)
+	}
+}
+
+// TestATitledSquashMovedIntoAnotherLineKeepsItsTitle is §2.10 crossed with
+// §2.8: a titled squash's ⤶ row, moved into another line, reads
+// "⤶ merged from <src8>: <title>" — the title survives the relabelling.
+func TestATitledSquashMovedIntoAnotherLineKeepsItsTitle(t *testing.T) {
+	w := moveWorld(t)
+	body := "#!/bin/sh\nprintf 'Fix the auth flow\\n\\nstate: the fixed summary\\nnext: carry on\\n'\n"
+	if err := os.WriteFile(filepath.Join(w.stubs, "claude"), []byte(body), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t1, seed := squashRow(t, w, sidT)
+	if !strings.HasPrefix(seed.Node.Title, claudeCompactionPrefix+": Fix the auth flow") {
+		t.Fatalf("setup: squash did not get a title, got %q", seed.Node.Title)
+	}
+	u := allOf(w.open(t1))
+	u = drive(t, cursorTo(t, u, t1, seed.Node.ID), key('m'))
+	u = drive(t, cursorTo(t, u, sidU, "u1-r"), enter)
+	u1 := w.replacement(sidU)
+
+	u = allOf(u)
+	moved := seedRow(t, u, u1)
+	want := claudeSummaryPrefix + " " + shortID(t1) + ": Fix the auth flow"
+	if moved.Node.Kind != adapter.KindSummaryImport || moved.Node.Title != want {
+		t.Fatalf("the moved row is %v %q, want %q", moved.Node.Kind, moved.Node.Title, want)
 	}
 }
 

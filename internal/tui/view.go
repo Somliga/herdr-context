@@ -83,7 +83,7 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 	if r.Node.Broken {
 		b.WriteString("⚠ ")
 	}
-	if r.HasChildren && r.Folded {
+	if r.BodyCount > 0 && r.Folded {
 		b.WriteString("▸ ")
 	}
 
@@ -115,7 +115,7 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 	if currentTip {
 		b.WriteString("   ● current")
 	}
-	if r.Folded && r.HasChildren {
+	if r.Folded && r.BodyCount > 0 {
 		b.WriteString(fmt.Sprintf("  (%d)", r.BodyCount))
 	}
 	line := b.String()
@@ -430,6 +430,40 @@ func branchHereCmd(a adapter.Adapter, st *store.Store, n *tree.Node, sp adapter.
 // Herdr. cmd/herdr-tree wires it to herdr.AgentPrompt.
 type SendFunc func(agent, text string) error
 
+// parseTitle reads a squash's title line (§2.10): the summary's first line,
+// when it is non-empty, at most 80 characters, and followed by a blank line.
+// A leading "title:" (any case) and surrounding quotes, "#" or "*" are
+// stripped. ok is false when no line qualifies — the whole text is then the
+// summary, unchanged, and title/body are not meant to be used.
+func parseTitle(text string) (title, body string, ok bool) {
+	nl := strings.IndexByte(text, '\n')
+	if nl < 0 {
+		return "", text, false
+	}
+	first, rest := text[:nl], text[nl+1:]
+	if strings.TrimSpace(first) == "" || len([]rune(first)) > 80 {
+		return "", text, false
+	}
+	blank, after, found := rest, "", false
+	if i := strings.IndexByte(rest, '\n'); i >= 0 {
+		blank, after, found = rest[:i], rest[i+1:], true
+	}
+	if !found || strings.TrimSpace(blank) != "" {
+		return "", text, false
+	}
+	t := strings.TrimSpace(first)
+	if low := strings.ToLower(t); strings.HasPrefix(low, "title:") {
+		t = strings.TrimSpace(t[len("title:"):])
+	}
+	t = strings.Trim(t, `"'`)
+	t = strings.Trim(t, "#*")
+	t = strings.TrimSpace(t)
+	if t == "" {
+		return "", text, false
+	}
+	return t, after, true
+}
+
 // foldBackSeed composes the injected turn's text.
 //
 // A summary of a DIFFERENT session arriving here is an import: knowledge came
@@ -449,6 +483,9 @@ type SendFunc func(agent, text string) error
 // compacted. Session identity alone cannot tell the two apart.
 func foldBackSeed(at *tree.Node, sum store.Summary, rewinding bool) string {
 	if rewinding && sum.SessionID == at.SessionID {
+		if t, body, ok := parseTitle(sum.Text); ok {
+			return claudeCompactionPrefix + ": " + t + "\n\n" + body
+		}
 		return claudeCompactionPrefix + " " + shortID(sum.FromTurn) + ".." + shortID(sum.ToTurn) + "\n\n" + sum.Text
 	}
 	return claudeSummaryPrefix + " " + shortID(sum.SessionID) + "\n\n" + sum.Text

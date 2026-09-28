@@ -75,6 +75,26 @@ func TestASquashShowsTheSummaryBeforeItLands(t *testing.T) {
 	}
 }
 
+// TestASquashShowsTheTitleAboveTheSummary is §2.10: a titled summary shows
+// its title above the box, and the title line does not also appear inside
+// the summary body.
+func TestASquashShowsTheTitleAboveTheSummary(t *testing.T) {
+	fa := &fakeAdapter{summary: "Ship the login screen\n\nstate: the tests pass\nnext: ship it"}
+	u, cmd := squashed(t, fa, &herdrLog{})
+	u = review(t, u, cmd)
+	v := flat(u.View())
+	if !strings.Contains(v, "Ship the login screen") {
+		t.Fatalf("the review lacks the title:\n%s", v)
+	}
+	if !strings.Contains(v, "state: the tests pass") {
+		t.Fatalf("the review lost the summary body:\n%s", v)
+	}
+	if strings.Count(v, "Ship the login screen") != 1 {
+		t.Fatalf("the title must not also appear in the body: %d occurrences in\n%s",
+			strings.Count(v, "Ship the login screen"), v)
+	}
+}
+
 func TestEnterInTheReviewSplicesThatSummaryAndReloads(t *testing.T) {
 	fa := &fakeAdapter{summary: "it went well", sessions: []adapter.Session{sessionOf("spliced-sid", "t1", "x")}}
 	u, cmd := squashed(t, fa, &herdrLog{})

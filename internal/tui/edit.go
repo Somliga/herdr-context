@@ -117,9 +117,9 @@ func (u uiModel) summarisingView() string {
 // its width, and the box given the rows the rest leaves. scroll is the
 // stored one, clamped to what this layout can show.
 type reviewParts struct {
-	header, then, footer string
-	lines                []string
-	show, scroll         int
+	header, title, then, footer string
+	lines                       []string
+	show, scroll                int
 }
 
 func (u uiModel) reviewLayout() reviewParts {
@@ -138,20 +138,36 @@ func (u uiModel) reviewLayout() reviewParts {
 		}
 		return strings.Join(ls, "\n")
 	}
-	rows := func(s string) int { return strings.Count(s, "\n") + 1 }
+	rows := func(s string) int {
+		if s == "" {
+			return 0
+		}
+		return strings.Count(s, "\n") + 1
+	}
 	sq := u.squash
+	text := sq.sum.Text
+	var titleLine string
+	if t, body, ok := parseTitle(sq.sum.Text); ok {
+		titleLine, text = t, body
+	}
 	p := reviewParts{
 		header: wrap(fmt.Sprintf("Squash turns %d–%d — review the summary", sq.first, sq.last), width),
+		title:  wrap(titleLine, width),
 		then:   wrap("Then: "+sq.then, width),
 		// The border and a space of padding on each side.
-		lines: strings.Split(wrap(sq.sum.Text, max(width-4, 10)), "\n"),
+		lines: strings.Split(wrap(text, max(width-4, 10)), "\n"),
 	}
 	footer := "↑↓ scroll  ⏎ commit  esc cancel (summary kept for p)"
 	fit := func(f string) {
 		p.footer = wrap(f, width)
 		// Besides the parts: a blank under the header, the box's two
-		// borders, a blank above the footer.
-		p.show = max(height-rows(p.header)-rows(p.then)-rows(p.footer)-4, 3)
+		// borders, a blank above the footer. The title, when present, adds
+		// its own line plus the blank that separates it from the box.
+		titleRows := 0
+		if p.title != "" {
+			titleRows = rows(p.title) + 1
+		}
+		p.show = max(height-rows(p.header)-titleRows-rows(p.then)-rows(p.footer)-4, 3)
 	}
 	fit(footer)
 	if len(p.lines) > p.show {
@@ -170,7 +186,11 @@ func (u uiModel) reviewView() string {
 	p := u.reviewLayout()
 	shown := p.lines[p.scroll:min(p.scroll+p.show, len(p.lines))]
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Render(strings.Join(shown, "\n"))
-	return p.header + "\n\n" + box + "\n" + p.then + "\n\n" + p.footer + "\n"
+	title := ""
+	if p.title != "" {
+		title = p.title + "\n\n"
+	}
+	return p.header + "\n\n" + title + box + "\n" + p.then + "\n\n" + p.footer + "\n"
 }
 
 // reviewKey is a key in the review: ⏎ runs the rest of the squash, esc

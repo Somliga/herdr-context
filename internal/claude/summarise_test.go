@@ -16,6 +16,7 @@ func TestCompactPromptNamesBothEnds(t *testing.T) {
 		"i want to discuss the weather",
 		"good conclusion",
 		"Your text will replace those turns",
+		"a title of at most 8 words",
 		"next",
 	} {
 		if !strings.Contains(p, want) {

@@ -33,6 +33,56 @@ func TestRenderRowMarksCurrent(t *testing.T) {
 	}
 }
 
+// TestRenderRowHidesTheFoldMarkerWithNoBodyChildren is §2.10's other half: a
+// head whose only children are the next turn or a branch has BodyCount 0,
+// and is not drawn as foldable even while Folded is true.
+func TestRenderRowHidesTheFoldMarkerWithNoBodyChildren(t *testing.T) {
+	n := &tree.Node{Node: adapter.Node{ID: "n1", Title: "head"}}
+	got, _ := renderRow(Row{Node: n, HasChildren: true, Folded: true, BodyCount: 0}, false, "", 80)
+	if strings.Contains(got, "▸") || strings.Contains(got, "(0)") {
+		t.Fatalf("a head with no folded body must not render as foldable: %q", got)
+	}
+}
+
+func TestRenderRowShowsTheFoldMarkerWithBodyChildren(t *testing.T) {
+	n := &tree.Node{Node: adapter.Node{ID: "n1", Title: "head"}}
+	got, _ := renderRow(Row{Node: n, HasChildren: true, Folded: true, BodyCount: 3}, false, "", 80)
+	if !strings.Contains(got, "▸") || !strings.Contains(got, "(3)") {
+		t.Fatalf("a head with folded body children must render as foldable: %q", got)
+	}
+}
+
+// TestParseTitle is §2.10's title-line table: what qualifies as a title,
+// what the seed's body becomes, and what does not qualify at all.
+func TestParseTitle(t *testing.T) {
+	cases := []struct {
+		name      string
+		text      string
+		wantTitle string
+		wantBody  string
+		wantOK    bool
+	}{
+		{"good title", "Add login screen\n\nstate: done", "Add login screen", "state: done", true},
+		{"title: prefix", "Title: Add login screen\n\nstate: done", "Add login screen", "state: done", true},
+		{"quoted", "\"Add login screen\"\n\nstate: done", "Add login screen", "state: done", true},
+		{"hash heading", "# Add login screen\n\nstate: done", "Add login screen", "state: done", true},
+		{"bold", "**Add login screen**\n\nstate: done", "Add login screen", "state: done", true},
+		{"empty first line", "\n\nstate: done", "", "\n\nstate: done", false},
+		{"first line over 80", strings.Repeat("x", 81) + "\n\nstate: done", "", strings.Repeat("x", 81) + "\n\nstate: done", false},
+		{"no blank line after first", "Add login screen\nstate: done", "", "Add login screen\nstate: done", false},
+		{"one-line summary", "just one line", "", "just one line", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			title, body, ok := parseTitle(c.text)
+			if ok != c.wantOK || title != c.wantTitle || (ok && body != c.wantBody) {
+				t.Fatalf("parseTitle(%q) = %q, %q, %v; want %q, %q, %v",
+					c.text, title, body, ok, c.wantTitle, c.wantBody, c.wantOK)
+			}
+		})
+	}
+}
+
 func TestRenderRowShowsSessionIdOnRoots(t *testing.T) {
 	n := &tree.Node{
 		Node:      adapter.Node{ID: "n1", Title: "x"},
@@ -1217,6 +1267,41 @@ func TestOnlyARewindIsCalledACompaction(t *testing.T) {
 	}
 	if !strings.HasPrefix(sent, claudeSummaryPrefix) {
 		t.Fatalf("an injected entry must still carry a marker: %q", firstLineOf(sent))
+	}
+}
+
+// TestFoldBackSeedNamesATitledSquash is §2.10: a rewind whose summary opens
+// with a title carries it into the seed's first line, with the title line
+// dropped from the body.
+func TestFoldBackSeedNamesATitledSquash(t *testing.T) {
+	at := &tree.Node{Node: adapter.Node{ID: "t20"}, SessionID: "s1", IsSessionLeaf: true}
+	sum := store.Summary{SessionID: "s1", FromTurn: "t5", ToTurn: "t12",
+		Text: "Add login screen\n\nstate: the login screen now exists"}
+
+	got := foldBackSeed(at, sum, true)
+	wantFirst := claudeCompactionPrefix + ": Add login screen"
+	if firstLineOf(got) != wantFirst {
+		t.Fatalf("first line %q, want %q", firstLineOf(got), wantFirst)
+	}
+	if strings.Count(got, "Add login screen") != 1 {
+		t.Fatalf("the title line must not also appear in the body: %q", got)
+	}
+	if !strings.Contains(got, "state: the login screen now exists") {
+		t.Fatalf("the body lost the summary: %q", got)
+	}
+}
+
+// TestFoldBackSeedKeepsTodaysFormatWhenUntitled is §2.10's fallback: a
+// summary with no qualifying title line keeps the from..to seed, whole text
+// included verbatim.
+func TestFoldBackSeedKeepsTodaysFormatWhenUntitled(t *testing.T) {
+	at := &tree.Node{Node: adapter.Node{ID: "t20"}, SessionID: "s1", IsSessionLeaf: true}
+	sum := store.Summary{SessionID: "s1", FromTurn: "t5", ToTurn: "t12", Text: "state: done\nnext: ship"}
+
+	got := foldBackSeed(at, sum, true)
+	want := claudeCompactionPrefix + " " + shortID("t5") + ".." + shortID("t12") + "\n\n" + sum.Text
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 

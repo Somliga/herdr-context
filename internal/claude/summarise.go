@@ -26,6 +26,8 @@ var summariseGraftHook func(path string)
 func CompactPrompt(fromTitle, toTitle string) string {
 	return fmt.Sprintf(`Compact the part of this conversation from the turn beginning %q up to and including the turn beginning %q. Your text will replace those turns: the conversation continues from it as if they had happened, so write what the continuation needs.
 
+Begin your reply with one line: a title of at most 8 words describing this stretch. Leave a blank line, then write the summary.
+
 Write short sections:
 - state: where the work stands at the end of the range — files, functions, values and settings that now exist or changed, named exactly.
 - decisions: what was settled and why, including any constraint the user stated.
