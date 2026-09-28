@@ -18,14 +18,15 @@ type Node struct {
 	// id and a cwd would fall back to reconstructing the path, which is wrong
 	// for any session that relocated into a worktree — the exact bug this
 	// field exists to prevent.
-	SessionPath   string
-	SessionTitle  string
-	SessionTokens int // the line's context number (§3.1); 0 = unknown
-	IsSessionRoot bool
-	IsSessionLeaf bool // the last turn of this session's own chain
-	Grafted       bool // this node starts a session branched from its parent
-	Broken        bool // session present but unreadable or empty
-	FromRemoved   bool // a branch whose turn was removed from the line it left
+	SessionPath     string
+	SessionTitle    string
+	SessionTokens   int  // the line's context number (§3.1); 0 = unknown
+	TokensEstimated bool // SessionTokens is an edit's estimate, not a reply's
+	IsSessionRoot   bool
+	IsSessionLeaf   bool // the last turn of this session's own chain
+	Grafted         bool // this node starts a session branched from its parent
+	Broken          bool // session present but unreadable or empty
+	FromRemoved     bool // a branch whose turn was removed from the line it left
 	// Superseded marks a node copied verbatim from the line a grafted session
 	// left, up to its graft point: the parent already shows this turn, so
 	// this copy of it renders no row (see attachPoint). Its children are
@@ -146,10 +147,14 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 			continue
 		}
 		nodeIndex[sess.ID] = map[string]*Node{}
+		tok, est := sess.ContextTokens, false
+		if e := s.Branches[sess.ID].EstTokens; tok == 0 && e > 0 {
+			tok, est = e, true
+		}
 		if len(sess.Nodes) == 0 {
 			n := &Node{
 				SessionID: sess.ID, SessionCWD: sess.CWD, SessionPath: sess.Path, SessionTitle: sess.Title,
-				SessionTokens: sess.ContextTokens,
+				SessionTokens: tok, TokensEstimated: est,
 				IsSessionRoot: true, IsSessionLeaf: true, Broken: true,
 			}
 			chains[sess.ID] = n
@@ -160,7 +165,7 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 			n := &Node{
 				Node: t, SessionID: sess.ID, SessionCWD: sess.CWD,
 				SessionPath: sess.Path, SessionTitle: sess.Title,
-				SessionTokens: sess.ContextTokens,
+				SessionTokens: tok, TokensEstimated: est,
 				IsSessionRoot: i == 0,
 				IsSessionLeaf: i == len(sess.Nodes)-1,
 				Broken:        sess.Broken,

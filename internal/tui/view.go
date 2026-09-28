@@ -170,7 +170,11 @@ func headerLine(r Row, width int) string {
 	}
 	b.WriteString(shortID(r.Node.SessionID))
 	if r.Node.SessionTokens > 0 {
-		b.WriteString(" · " + humanTokens(r.Node.SessionTokens))
+		b.WriteString(" · ")
+		if r.Node.TokensEstimated {
+			b.WriteString("~")
+		}
+		b.WriteString(humanTokens(r.Node.SessionTokens))
 	}
 	if r.Node.FromRemoved {
 		b.WriteString("  from a removed stretch")

@@ -69,8 +69,10 @@ obvious from it.
   partner line has moved on.
 - **The context number is the last reply's usage on the current line**
   (input + cache read + cache creation), counted once per reply, skipping
-  all-zero synthetic replies. `Splice` strips `usage` from what it writes, so a
-  freshly edited line shows no number. Grafts keep theirs: a branch shows its
+  all-zero synthetic replies. `Splice` strips `usage` from what it writes; the
+  edit stores an estimate (`est_tokens`, shown `~`) until the next reply:
+  shown number × kept bytes ÷ line bytes + seed ÷ 4. Cost: bytes are a rough
+  proxy (JSONL metadata, tool output), fine for a `~`. Grafts keep theirs: a branch shows its
   fork point's real size. Cost: if that reads as wrong, strip in grafts too.
 - **An edit re-reads the store from disk before paying and before splicing, and
   refuses if a line it writes was replaced elsewhere.** Why: two overlays on

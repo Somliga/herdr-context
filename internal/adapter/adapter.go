@@ -50,7 +50,8 @@ type Session struct {
 	Live    bool   // a process currently holds it
 	Broken  bool   // transcript present but unreadable
 	// ContextTokens is what the line's last reply read (§3.1 of the
-	// undo/redo and context meter spec): 0 means unknown, never estimated.
+	// undo/redo and context meter spec): 0 means unknown. An edited line with
+	// no reply of its own has 0 here; its estimate lives in the store.
 	ContextTokens int
 }
 
@@ -121,4 +122,8 @@ type Spliced struct {
 	Removed   int    // whole turns removed (a move: moved), not counting the preamble
 	After     string // the first entry after the edit, "" when nothing follows
 	First     string // a move: the first moved entry, under its new uuid; a squash or merge: its seed
+	// KeptBytes is the size of what was copied from existing transcripts and
+	// LineBytes the size of the line edited, both marshalled as read, so
+	// the caller can estimate the new line's context (§3.1).
+	KeptBytes, LineBytes int64
 }

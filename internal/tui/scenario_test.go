@@ -1751,3 +1751,54 @@ func TestBLeavesTheParentsTurnFolded(t *testing.T) {
 		}
 	}
 }
+
+// After an edit the line has no reply of its own yet, so its header shows the
+// edit's estimate, marked ~ — smaller than before for a drop — until the next
+// reply brings a real number.
+func TestScenarioAnEditedLineShowsAnEstimatedContextSize(t *testing.T) {
+	w := newWorld(t)
+	w.durations = true
+	w.trunk(sidT, "t1", "t2", "t3")
+	// Give t3's reply real-shaped usage by rewriting the fixture file's last reply.
+	path := w.path(sidT)
+	es, _, err := claude.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []byte
+	for _, e := range es {
+		if e.UUID() == "t3-r" {
+			e.Raw["message"].(map[string]any)["usage"] = map[string]any{
+				"input_tokens": 0, "cache_read_input_tokens": 90000, "cache_creation_input_tokens": 0, "output_tokens": 5}
+		}
+		b, err := claude.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(append(out, b...), '\n')
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	u := allOf(w.open(sidT))
+	if !strings.Contains(shown(u), shortID(sidT)+" · 90k") {
+		t.Fatalf("no real number before the edit:\n%s", shown(u))
+	}
+	u = drive(t, selectRange(t, u, sidT, "t2-p", "t2-r", 1), enter)
+	v := w.replacement(sidT)
+	h := ""
+	for _, l := range screen(allOf(u)) {
+		if strings.Contains(l, shortID(v)) {
+			h, _, _ = strings.Cut(l, "\n")
+		}
+	}
+	i := strings.Index(h, " · ~")
+	if i < 0 {
+		t.Fatalf("edited line's header has no ~ estimate: %q", h)
+	}
+	var k int
+	if _, err := fmt.Sscanf(h[i+len(" · ~"):], "%dk", &k); err != nil || k <= 0 || k >= 90 {
+		t.Fatalf("estimate %q is not a drop's smaller number", h[i:])
+	}
+}

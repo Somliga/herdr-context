@@ -56,8 +56,8 @@ in progress it changes to say so.
 
 - **Session headers.** Each session's first row has a header line above it:
   `<id>` for a root line, `↳ <id>` for a branch, then the line's context size
-  (`↳ 1a2b3c4d · 84k`): what its last reply read. No number until a line has
-  a reply of its own, so a freshly edited line shows none. A branch whose turn was
+  (`↳ 1a2b3c4d · 84k`): what its last reply read. A freshly edited line shows
+  the edit's estimate (`· ~31k`) until its next reply. A branch whose turn was
   squashed or dropped away shows as a root marked `from a removed stretch`.
 - **Your path.** A cyan `▎` in the left margin marks every row on the path to
   the session you are in. The default scope is that session's family: its root

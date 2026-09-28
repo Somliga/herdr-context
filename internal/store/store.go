@@ -45,6 +45,10 @@ type Branch struct {
 	Undone   bool      `json:"undone,omitempty"`
 	UndoneAt time.Time `json:"undone_at,omitempty"`
 	Edit     string    `json:"edit,omitempty"`
+
+	// EstTokens is the edit's estimate of the new line's context, shown
+	// (marked ~) until the line has a reply of its own.
+	EstTokens int `json:"est_tokens,omitempty"`
 }
 
 // Moved names the first moved entry in the target and the session the turns

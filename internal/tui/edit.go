@@ -40,6 +40,7 @@ type editOp struct {
 	dst       string
 	movedTo   string // a cut that is a move's drop: where the turns went
 	editID    string // shared by a cross-line move's two records, so they undo together
+	ctx       int    // the source line's context number as shown (real or ~), for the estimate
 }
 
 // summariseRange makes the billed summary call over op's range and stores
@@ -297,6 +298,17 @@ func verb(kind string) string {
 // the spec fixes (§6.1). Each step runs only if the one before succeeded, and
 // every status says what DID happen. It only writes: moving to the new line
 // is the user's own ⏎ (§6.2).
+// estimate is the new line's context after an edit (§3.1): the source's
+// number as shown (its last reply's, or its own estimate) scaled by the
+// share of bytes kept, plus the seed's text at ~4 bytes a token. 0 when the
+// source has no number.
+func estimate(before int, res adapter.Spliced, seed string) int {
+	if before == 0 || res.LineBytes == 0 {
+		return 0
+	}
+	return int(math.Round(float64(before)*float64(res.KeptBytes)/float64(res.LineBytes) + float64(len(seed))/4))
+}
+
 func editCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) tea.Cmd {
 	return func() tea.Msg {
 		// A squash was asked before its summary, by summariseCmd.
@@ -333,6 +345,7 @@ func editCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) tea.C
 			return actionDoneMsg{status: verb(op.kind) + " failed: " + scrubbed(err, op.edit.Seed)}
 		}
 		b := store.Branch{Kind: op.kind, Title: op.title, CreatedAt: time.Now().UTC(), Edit: op.editID}
+		b.EstTokens = estimate(op.ctx, res, op.edit.Seed)
 		if op.kind == store.KindCut {
 			b.Cut = &store.Cut{Turns: res.Removed, At: res.After, To: op.movedTo}
 		}
@@ -453,7 +466,7 @@ func (u uiModel) editConfirm(kind string) (tea.Model, tea.Cmd) {
 		return u, nil
 	}
 	op := editOp{src: src, edit: adapter.Edit{From: from.Node.ID, To: to.Node.ID}, kind: kind,
-		from: from, to: to, dst: u.dstCWD(to), title: "✂ drop"}
+		from: from, to: to, dst: u.dstCWD(to), title: "✂ drop", ctx: to.SessionTokens}
 	if kind == store.KindCut {
 		text := fmt.Sprintf("Drop turns %d–%d:\n\n  from  %q\n  to    %q\n\nRemoves turns %d–%d. Costs nothing. No note is left in the conversation.\n%s",
 			sp.First, sp.Last, from.Node.Title, to.Node.Title, sp.First, sp.Last, replacesLine)
@@ -571,7 +584,7 @@ func (u uiModel) placeChosen(idx int) (tea.Model, tea.Cmd) {
 		// Nothing is removed, so nothing contracted: a merge is always marked
 		// as knowledge arriving, whatever session the summary came from.
 		op := editOp{src: src, edit: adapter.Edit{After: at.Node.ID, Seed: foldBackSeed(at, sum, false)}, kind: store.KindInserted,
-			dst: u.dstCWD(at), title: "⤶ " + summaryTitle(sum.Text)}
+			dst: u.dstCWD(at), title: "⤶ " + summaryTitle(sum.Text), ctx: at.SessionTokens}
 		return editCmd(u.a, u.st, op, u.live)
 	}
 	sp, err := u.a.Widen(src, at.Node.ID, at.Node.ID)
@@ -656,13 +669,13 @@ func (u uiModel) putDown(at *tree.Node) (tea.Model, tea.Cmd) {
 	dst := adapter.Session{ID: at.SessionID, CWD: at.SessionCWD, Path: at.SessionPath}
 	src := mv.src
 	ins := editOp{src: dst, edit: adapter.Edit{From: mv.n.Node.ID, After: at.Node.ID, Carry: &src},
-		kind: store.KindMoved, dst: u.dstCWD(at), title: "⇢ move"}
+		kind: store.KindMoved, dst: u.dstCWD(at), title: "⇢ move", ctx: at.SessionTokens}
 	u.busy = "moving…"
 	if dst.ID == src.ID {
 		return u, editCmd(u.a, u.st, ins, u.live)
 	}
 	drop := editOp{src: src, edit: adapter.Edit{From: mv.n.Node.ID, To: mv.n.Node.ID}, kind: store.KindCut,
-		dst: u.dstCWD(mv.n), title: "✂ drop"}
+		dst: u.dstCWD(mv.n), title: "✂ drop", ctx: mv.n.SessionTokens}
 	return u, carryCmd(u.a, u.st, ins, drop, u.live)
 }
 

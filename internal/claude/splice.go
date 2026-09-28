@@ -162,6 +162,10 @@ func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, err
 	if e.Seed == "" && a <= 1 && b >= l.last {
 		return adapter.Spliced{}, ErrNothingLeft
 	}
+	rangeBytes, lineBytes, err := l.byteShares(a, b)
+	if err != nil {
+		return adapter.Spliced{}, err
+	}
 
 	var before, after string
 	for _, u := range l.chain {
@@ -239,7 +243,8 @@ func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, err
 	if removed < 0 {
 		removed = 0
 	}
-	return adapter.Spliced{SessionID: sid, Removed: removed, After: after, First: seedUUID}, nil
+	return adapter.Spliced{SessionID: sid, Removed: removed, After: after, First: seedUUID,
+		KeptBytes: lineBytes - rangeBytes, LineBytes: lineBytes}, nil
 }
 
 // move is Splice for an Edit with Carry (§2.8): the one turn of Carry's
@@ -392,7 +397,18 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 	if _, err := writeSession(dstCWD, sid, buf); err != nil {
 		return adapter.Spliced{}, err
 	}
-	out := adapter.Spliced{SessionID: sid, Removed: 1, First: first}
+	_, lineBytes, err := l.byteShares(1, 0)
+	if err != nil {
+		return adapter.Spliced{}, err
+	}
+	out := adapter.Spliced{SessionID: sid, Removed: 1, First: first, KeptBytes: lineBytes, LineBytes: lineBytes}
+	if !same {
+		moved, _, err := from.byteShares(mt, mt)
+		if err != nil {
+			return adapter.Spliced{}, err
+		}
+		out.KeptBytes += moved
+	}
 	if same {
 		out.After = gap
 	}

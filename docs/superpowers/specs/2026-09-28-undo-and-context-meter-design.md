@@ -114,6 +114,17 @@ The split entries of one reply share one usage; it is counted once.
 If the line has no such reply (a new branch, a squashed line not yet replied
 to, an older transcript format), the number is **absent** — never estimated.
 
+**Amended 2026-09-28 (user, after live testing):** an edited line with no
+reply of its own shows an **estimate, marked `~`** (`b68a21b1 · ~31k`),
+because the tree is usually read right after an edit. Each edit (squash,
+drop, move, merge) computes it at splice time: the source line's shown number
+(real or `~`) × kept bytes ÷ line bytes + seed text bytes ÷ 4, where kept
+bytes are what was copied from transcripts (a cross-line move's target adds
+the moved turn). It is stored as `est_tokens` on the new record. The next
+reply's real number replaces it. Splices strip `usage` from copied entries, so
+a stale real number never shows. A graft keeps its copied usage: a branch
+shows its fork point's real number.
+
 ### 3.2 Where it shows
 
 - **Session header** (context-editing §5.3e): `↳ 1a2b3c4d · 84k`, muted,
@@ -122,8 +133,8 @@ to, an older transcript format), the number is **absent** — never estimated.
 - **Squash review** (§2.9): below the `Then:` line, `context 84k → ~31k` —
   the estimate is the current number × (1 − range bytes ÷ line bytes) +
   summary bytes ÷ 4, marked `~`. Omitted when the line has no number.
-- Nowhere else. The header of a freshly squashed line shows no number until
-  its next reply.
+- Nowhere else. The header of a freshly edited line shows its `~` estimate
+  (§3.1, amended) until its next reply.
 
 ### 3.3 Where it lives
 
