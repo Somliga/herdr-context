@@ -265,7 +265,9 @@ one, §2.8, `⤶ merged from <source8>: <title>`); the review view (§2.9) shows
 the title above the summary. If the first line is empty, longer than 80
 characters, or not followed by a blank line, it is not a title: the seed keeps
 `⤶ squashed <from8>..<to8>` and the whole reply is the summary. Only new
-squashes get titles; existing rows are left as they are.
+squashes get titles; existing rows are left as they are. Placing a titled
+summary with `p` (merge here, branch here, or sent to the live tip) uses it
+too: `⤶ merged from <source8>: <title>`, the title line left out of the body.
 
 A row shows `▸` and its folded count only when it has something of its own
 folded under it (BodyCount > 0); a head whose only children are the next turn
