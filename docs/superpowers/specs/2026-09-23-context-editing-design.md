@@ -16,6 +16,13 @@ turn, **branch** starts a new line, and **checkout** moves onto a
 replacement. `rebase` is deliberately unused: nothing here replays turns onto
 another base.
 
+> **Amended 2026-09-28:** `squash into…` is removed. To carry a stretch into
+> another line, squash it, then move (§2.8) the `⤶` row there. A `⤶ squashed`
+> row moved into another line is relabelled `⤶ merged from <source8>` (§2.8).
+> The report-style summary prompt goes with it; every squash uses the handover
+> prompt. §2.7 and every mention of squash into… below describe the removed
+> operation and no longer bind.
+
 ## 1. The model
 
 v2 could produce a summary and place it, but placing it at a turn always
@@ -64,7 +71,7 @@ footer reads `s select` rather than `s summarise`.
 With a range fixed, `⏎` opens a menu over it:
 
 ```
-squash · squash into… · drop · esc back
+squash · drop · esc back
 ```
 
 - **squash** — the range is replaced by its summary in its own
@@ -210,6 +217,10 @@ after the turn under the cursor, following it; their origin shows a dimmed
   on the first moved turn.
 
 **`esc`** cancels: nothing was written.
+
+**Relabelling.** A `⤶ squashed` row moved into another line becomes
+`⤶ merged from <source8>` (the rest of its text unchanged): it is knowledge
+arriving there, not a contraction of that line.
 
 **Refused** (status, still moving): the target turn is the picked-up turn
 itself, or the turn right before it (a no-op); a move that would take every
