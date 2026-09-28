@@ -242,9 +242,11 @@ after the turn under the cursor, following it; their origin shows a dimmed
   copy, nothing lost.
 - The busy checks (§6.1) and the changed-elsewhere check (§5.1) run on every
   line written. No pane opens (§6).
-- **Markers:** the source shows `⇢ 1 turn moved to <id8>` where they were
-  (a drop marker with a destination); the target shows `⇠ moved from <id8>`
-  on the first moved turn.
+- **Markers** (another line only): the source shows `⇢ 1 turn moved to
+  <id8>` where they were (a drop marker with a destination); the target shows
+  `⇠ moved from <id8>` on the first moved turn. A move within the line is a
+  reorder and leaves no marker (amended 2026-09-28): both would name the line
+  itself, and they piled up and went stale with each further edit.
 
 **`esc`** cancels: nothing was written.
 

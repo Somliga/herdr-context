@@ -166,8 +166,9 @@ func TestEscPutsTheTurnsBack(t *testing.T) {
 	}
 }
 
-// Within the line: one splice, turns in their new order, both markers, no
-// pane touched, and the old line hidden.
+// Within the line: one splice, turns in their new order, no pane touched,
+// and the old line hidden. A reorder leaves no marker: a line saying it moved
+// a turn to itself piles up and goes stale.
 func TestAMoveWithinTheLine(t *testing.T) {
 	w := moveWorld(t)
 	u := drive(t, cursorTo(t, w.open(sidT), sidT, "t2-p"), key('m'))
@@ -189,11 +190,14 @@ func TestAMoveWithinTheLine(t *testing.T) {
 	}
 	u = allOf(u)
 	checkLines(t, u, r, sidU)
-	if got := rowText(u, r, "t3-p"); !strings.Contains(got, "⇢ 1 turn moved to "+shortID(r)) {
-		t.Errorf("where t2 was: %q", got)
+	for _, row := range screen(u) {
+		if strings.Contains(row, "⇢") || strings.Contains(row, "⇠") || strings.Contains(row, "✂") {
+			t.Errorf("a reorder left a marker: %q", row)
+		}
 	}
-	if moved := screen(u)[indexOf(screen(u), "user: prompt t2")]; !strings.Contains(moved, "⇠ moved from "+shortID(r)) {
-		t.Errorf("the moved turn: %q", moved)
+	st, _ := store.Load(w.repo)
+	if b := st.Branches[r]; b.Cut != nil || b.MovedFrom != nil {
+		t.Errorf("a reorder recorded cut %+v, moved from %+v", b.Cut, b.MovedFrom)
 	}
 	checkNoCopies(t, u)
 }

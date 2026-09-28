@@ -26,6 +26,9 @@ obvious from it.
   refusal rate can hide defects.
 - **Move is one section, no range move.** User choice: squash a stretch first,
   then move its `⤶` row. Cost: two steps for a stretch.
+- **A move within the line leaves no marker.** Why: its `⇢ moved to` and
+  `⇠ moved from` named the line itself, and piled up and went stale with each
+  later edit. A reorder is visible in the order.
 - **Moving within the same line is one splice; into another line it is target
   first, then drop from the source.** Why: a failure leaves a copy, never a
   loss.

@@ -65,8 +65,10 @@ in progress it changes to say so.
   - `⤶ squashed …` (blue) — a stretch of this line replaced by its summary.
   - `⤶ merged from <id> …` (orange) — a summary brought in from another line.
   - `✂ N turns dropped before/after this` (muted) — a drop.
-  - `⇢ 1 turn moved to <id>` (muted) — where a moved turn used to be.
-  - `⇠ moved from <id>` (muted) — the moved turn in its new line.
+  - `⇢ 1 turn moved to <id>` (muted) — where a turn moved into another line
+    used to be.
+  - `⇠ moved from <id>` (muted) — the moved turn in its new line. A move
+    within one line is a reorder and leaves no marker.
   - `● current` — the tip of the session you are in.
 
 ## Squash

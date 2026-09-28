@@ -316,11 +316,10 @@ func editCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) tea.C
 		if op.kind == store.KindCut {
 			b.Cut = &store.Cut{Turns: res.Removed, At: res.After, To: op.movedTo}
 		}
-		if op.kind == store.KindMoved {
+		// A move within the line is a reorder and leaves no marker (§2.8):
+		// "moved to" and "moved from" would name the line itself.
+		if op.kind == store.KindMoved && op.edit.Carry.ID != op.src.ID {
 			b.MovedFrom = &store.Moved{SessionID: op.edit.Carry.ID, At: res.First}
-			if op.edit.Carry.ID == op.src.ID {
-				b.Cut = &store.Cut{Turns: res.Removed, At: res.After, To: res.SessionID}
-			}
 		}
 		st.Replace(op.src.ID, res.SessionID, b)
 		if err := st.Save(); err != nil {
