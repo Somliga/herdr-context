@@ -225,6 +225,26 @@ rewrites, consistently within the moved turn, its uuids, requestIds,
 the target may hold copies carrying the same ids, and a repeated requestId or
 message id would merge or mis-assign turns.
 
+### 2.9 Watch it summarise, read it before it lands
+
+For **squash** and **squash into…**, after the confirmation:
+
+- **Summarising view.** The overlay shows what is running: `Summarising
+  turns <a>–<b> of <id8>`, the Preview figures (`the model is reading <t>
+  turns · <e> entries · <size>`), a spinner and the elapsed time, ticking every
+  second, and `ctrl+c leaves (the call is already billed)`.
+- **Review view.** When the summary arrives it is stored (§2.6) and shown in
+  full in a scrollable box, headed `Squash turns <a>–<b> — review the
+  summary`, with the `Then:` line of the operation below it (replaced here /
+  merged into / branch at / sent to). `↑↓` scroll, `⏎` commits — the rest of
+  the operation runs exactly as before (busy and changed-elsewhere checks,
+  then the splice, or the landing then the drop) — and `esc` cancels: nothing
+  is written to any conversation; the summary stays stored for `p`.
+- A summary failure shows its error in the summarising view's place and
+  writes nothing, as today.
+
+The summary is shown only in this view — never in a status line.
+
 ## 3. The splice
 
 `claude.Splice`, next to `GraftSeeded` in `internal/claude/graft.go`.
