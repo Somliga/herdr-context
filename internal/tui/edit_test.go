@@ -132,8 +132,8 @@ func TestCompactSummarisesThenSplicesWithTheSeed(t *testing.T) {
 	if !strings.Contains(u.confirm, "billed") || !strings.Contains(u.confirm, "replaced by the summary") {
 		t.Fatalf("compact confirmation:\n%s", u.confirm)
 	}
-	_, cmd := press(t, u, enter)
-	cmd()
+	u, cmd := press(t, u, enter)
+	commit(t, u, cmd)
 	if fa.summarisedFrom != "t2" || fa.summarisedTo != "t3" {
 		t.Fatalf("summarised %q..%q", fa.summarisedFrom, fa.summarisedTo)
 	}
@@ -154,7 +154,7 @@ func TestAFailedSummaryWritesAndClosesNothing(t *testing.T) {
 	h := &herdrLog{status: []string{"idle"}}
 	u, _ := press(t, rangeUI(t, fa, h), enter, enter)
 	_, cmd := press(t, u, enter)
-	msg := cmd().(actionDoneMsg)
+	msg := run(cmd).(actionDoneMsg)
 	if len(fa.spliced) != 0 || fa.resumed != "" {
 		t.Fatal("something was written or opened after the summary failed")
 	}
@@ -180,8 +180,8 @@ func TestAnAgentThatStartsWorkingDuringTheSummaryStopsTheSplice(t *testing.T) {
 	fa := &fakeAdapter{summary: "s", span: adapter.Span{First: 2, Last: 3}}
 	h := &herdrLog{status: []string{"idle", "working"}}
 	u, _ := press(t, rangeUI(t, fa, h), enter, enter)
-	_, cmd := press(t, u, enter)
-	msg := cmd().(actionDoneMsg)
+	u, cmd := press(t, u, enter)
+	_, msg := commit(t, u, cmd)
 	if len(fa.spliced) != 0 {
 		t.Fatal("spliced while the agent was working")
 	}
@@ -205,8 +205,8 @@ func TestNoEditStatusCarriesTheSeed(t *testing.T) {
 	fa := &fakeAdapter{summary: sentinel, span: adapter.Span{First: 2, Last: 3},
 		spliceErr: errors.New("write failed: " + sentinel)}
 	u, _ := press(t, rangeUI(t, fa, &herdrLog{}), enter, enter)
-	_, cmd := press(t, u, enter)
-	if msg := cmd().(actionDoneMsg); strings.Contains(msg.status, sentinel) {
+	u, cmd := press(t, u, enter)
+	if _, msg := commit(t, u, cmd); strings.Contains(msg.status, sentinel) {
 		t.Fatalf("status leaked the summary: %q", msg.status)
 	}
 }
@@ -374,7 +374,7 @@ func TestAMoveByMergeConfirmsOnceThenSummarisesMergesAndDrops(t *testing.T) {
 		t.Fatalf("paid or wrote before the confirmation: %v", fa.writes)
 	}
 	u, cmd = press(t, u, enter)
-	msg := cmd().(actionDoneMsg)
+	u, msg := commit(t, u, cmd)
 	if got := strings.Join(fa.writes, ","); got != "summarise s,splice o,splice s" {
 		t.Fatalf("writes %s, want the summary, then the merge into o, then the drop from s", got)
 	}
@@ -415,8 +415,8 @@ func TestAMoveByBranchSummarisesGraftsThenDrops(t *testing.T) {
 	if fa.summarisedFrom != "" {
 		t.Fatal("summarised before the confirmation")
 	}
-	_, cmd := press(t, u, enter)
-	msg := cmd().(actionDoneMsg)
+	u, cmd := press(t, u, enter)
+	_, msg := commit(t, u, cmd)
 	if got := strings.Join(fa.writes, ","); got != "summarise s,graft o,splice s" {
 		t.Fatalf("writes %s, want the summary, the graft, then the drop", got)
 	}
@@ -447,8 +447,8 @@ func TestAMoveToTheLiveTipConfirmsThenSummarisesSendsDropsAndQuits(t *testing.T)
 	if cmd != nil || fa.summarisedFrom != "" || len(fa.writes) != 0 {
 		t.Fatalf("sent or paid before the confirmation: %v", fa.writes)
 	}
-	_, cmd = press(t, u, enter)
-	msg := cmd().(actionDoneMsg)
+	u, cmd = press(t, u, enter)
+	_, msg := commit(t, u, cmd)
 	if got := strings.Join(fa.writes, ","); got != "summarise s,send agent-1,splice s" {
 		t.Fatalf("writes %s, want the summary, the send, then the drop", got)
 	}
@@ -464,7 +464,7 @@ func TestAFailedMoveSummaryWritesAndDropsNothing(t *testing.T) {
 	fa := &fakeAdapter{summariseErr: errors.New("claude: limit reached")}
 	u, _ := press(t, at(t, moveUI(t, fa, &herdrLog{}), "o1"), enter, enter)
 	u, cmd := press(t, u, enter)
-	next, _ := u.Update(cmd())
+	next, _ := u.Update(run(cmd))
 	u = next.(uiModel)
 	if got := strings.Join(fa.writes, ","); got != "summarise s" {
 		t.Fatalf("writes %s, want only the failed summary", got)
@@ -477,16 +477,16 @@ func TestAFailedMoveSummaryWritesAndDropsNothing(t *testing.T) {
 func TestAFailedFoldCutsNothing(t *testing.T) {
 	fa := &fakeAdapter{seedErr: errors.New("graft refused")}
 	u, _ := press(t, at(t, moveUI(t, fa, &herdrLog{}), "o1"), enter, down, enter)
-	_, cmd := press(t, u, enter)
-	msg := cmd().(actionDoneMsg)
+	u, cmd := press(t, u, enter)
+	_, msg := commit(t, u, cmd)
 	if got := strings.Join(fa.writes, ","); got != "summarise s,graft o" || msg.status != "summary stored — branch failed: graft refused" {
 		t.Fatalf("writes %s status %q", got, msg.status)
 	}
 
 	fa = &fakeAdapter{spliceErrAt: 1}
 	u, _ = press(t, at(t, moveUI(t, fa, &herdrLog{}), "o1"), enter, enter)
-	_, cmd = press(t, u, enter)
-	msg = cmd().(actionDoneMsg)
+	u, cmd = press(t, u, enter)
+	_, msg = commit(t, u, cmd)
 	if got := strings.Join(fa.writes, ","); got != "summarise s,splice o" || msg.status != "summary stored — merged failed: disk full" {
 		t.Fatalf("writes %s status %q", got, msg.status)
 	}
@@ -496,7 +496,7 @@ func TestACutThatFailsAfterTheFoldSaysSo(t *testing.T) {
 	fa := &fakeAdapter{spliceErrAt: 2}
 	u, _ := press(t, at(t, moveUI(t, fa, &herdrLog{}), "o1"), enter, enter)
 	u, cmd := press(t, u, enter)
-	msg := cmd().(actionDoneMsg)
+	u, msg := commit(t, u, cmd)
 	if msg.status != "squashed into o, but the source was not dropped: drop failed: disk full" || !msg.reload || msg.quit {
 		t.Fatalf("%+v", msg)
 	}
@@ -511,8 +511,8 @@ func TestAMoveChecksTheSourceAgainBeforeCutting(t *testing.T) {
 	fa := &fakeAdapter{}
 	h := &herdrLog{status: []string{"idle", "working"}}
 	u, _ := press(t, at(t, moveUI(t, fa, h), "o1"), enter, down, enter)
-	_, cmd := press(t, u, enter)
-	msg := cmd().(actionDoneMsg)
+	u, cmd := press(t, u, enter)
+	_, msg := commit(t, u, cmd)
 	if got := strings.Join(fa.writes, ","); got != "summarise s,graft o" {
 		t.Fatalf("writes %s, want the fold and no cut", got)
 	}
@@ -541,7 +541,7 @@ func TestABusySourceAtConfirmPaysForNothing(t *testing.T) {
 		fa := &fakeAdapter{}
 		u, _ := press(t, at(t, moveUI(t, fa, h), "o1"), enter, down, enter)
 		_, cmd := press(t, u, enter)
-		msg := cmd().(actionDoneMsg)
+		msg := run(cmd).(actionDoneMsg)
 		if fa.summarisedFrom != "" || len(fa.writes) != 0 {
 			t.Fatalf("writes %v, want nothing summarised or written", fa.writes)
 		}
@@ -590,8 +590,8 @@ func TestContinueOnALiveSessionOpensAndClosesNothing(t *testing.T) {
 	if strings.Contains(u.confirm, "Text typed but not sent") {
 		t.Fatalf("an edit closes no pane, so it must not warn of one:\n%s", u.confirm)
 	}
-	_, cmd := press(t, u, enter)
-	msg := cmd().(actionDoneMsg)
+	u, cmd := press(t, u, enter)
+	_, msg := commit(t, u, cmd)
 	if fa.resumed != "" {
 		t.Fatalf("an edit opened %q", fa.resumed)
 	}
@@ -844,8 +844,8 @@ func TestTheHandoverFindsTheOldPaneAlreadyGone(t *testing.T) {
 func TestAPaneOpenedDuringTheSummaryStopsTheSplice(t *testing.T) {
 	fa := &fakeAdapter{summary: "s", span: adapter.Span{First: 2, Last: 3}}
 	u, _ := press(t, rangeUI(t, fa, &herdrLog{status: []string{"", "working"}}), enter, enter)
-	_, cmd := press(t, u, enter)
-	msg := cmd().(actionDoneMsg)
+	u, cmd := press(t, u, enter)
+	_, msg := commit(t, u, cmd)
 	if len(fa.spliced) != 0 || !strings.HasPrefix(msg.status, "summary stored") {
 		t.Fatalf("spliced %+v status %q", fa.spliced, msg.status)
 	}

@@ -582,7 +582,8 @@ func TestSummariseStoresTheRangeAndKeepsTheOverlayOpen(t *testing.T) {
 
 	fa := &fakeAdapter{summary: "it went well"}
 	op := editOp{src: adapter.Session{ID: "s"}, kind: store.KindCompacted, summarise: true, from: from, to: to}
-	msg := editCmd(fa, st, op, nil)().(actionDoneMsg)
+	summarise, commit := squashCmd(fa, st, op, nil)
+	msg := commit(summarise().(summarisedMsg).sum)().(actionDoneMsg)
 
 	if msg.quit {
 		t.Fatal("summarising must not close the overlay: nothing has been opened")
@@ -613,7 +614,8 @@ func TestFailedSummariseStoresNothingAndKeepsTheOverlayOpen(t *testing.T) {
 
 	fa := &fakeAdapter{summariseErr: errors.New("claude: credit balance too low")}
 	op := editOp{src: adapter.Session{ID: "s"}, kind: store.KindCompacted, summarise: true, from: from, to: to}
-	msg := editCmd(fa, st, op, nil)().(actionDoneMsg)
+	summarise, _ := squashCmd(fa, st, op, nil)
+	msg := summarise().(actionDoneMsg)
 
 	if msg.quit {
 		t.Fatal("a failed summarise must not quit: the message would never be seen")
@@ -784,7 +786,7 @@ func TestSKeyFixesTheRangeEndThenConfirmsBeforeSummarising(t *testing.T) {
 	if got3.m.RangeEnd != nil {
 		t.Fatal("acting on a range consumes it")
 	}
-	if msg := cmd3().(actionDoneMsg); msg.quit {
+	if _, msg := commit(t, got3, cmd3); msg.quit {
 		t.Fatal("summarising must not close the overlay")
 	}
 	if fa.summarisedFrom != "t1" || fa.summarisedTo != "t3" {

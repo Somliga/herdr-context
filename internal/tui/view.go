@@ -262,6 +262,10 @@ type uiModel struct {
 	// any of them cancels it.
 	folding *foldMove
 
+	// squash is a squash or squash into… from its confirmation to its
+	// landing: summarising while busy, then the review (§2.9).
+	squash *squashing
+
 	// moving is move's picked-up section (§2.8), nil when none is in hand.
 	moving *carry
 
@@ -568,9 +572,27 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		u.width, u.height = msg.Width, msg.Height
+	case summarisedMsg:
+		u.busy, u.abandoning = "", false
+		if u.squash != nil {
+			sq := *u.squash
+			sq.sum = &msg.sum
+			u.squash = &sq
+		}
+		return u, nil
+	case tickMsg:
+		// Only the summarising view ticks; the summary arriving stops it.
+		if u.squash == nil || u.squash.sum != nil || u.busy == "" {
+			return u, nil
+		}
+		sq := *u.squash
+		sq.now = time.Time(msg)
+		u.squash = &sq
+		return u, tick()
 	case actionDoneMsg:
 		u.busy = ""
 		u.abandoning = false
+		u.squash = nil
 		u.status = msg.status
 		if msg.quit {
 			u.quitting = true
@@ -613,6 +635,9 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return u, tea.Quit
 			}
 			return u, nil
+		}
+		if u.squash != nil && u.squash.sum != nil {
+			return u.reviewKey(msg)
 		}
 		if u.labelling != nil {
 			switch msg.Type {
@@ -699,12 +724,21 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				u.m.CancelRange() // acted on; a summarise consumes its range
 				u.busy, u.folding = busy, nil
+				if u.squash != nil {
+					sq := *u.squash
+					sq.since = time.Now()
+					sq.now = sq.since
+					u.squash = &sq
+					// The work first: tests run it alone and drop the tick.
+					return u, tea.Batch(cmd, tick())
+				}
 				return u, cmd
 			case "esc", "q":
 				// The range survives: escaping the cost dialog is how you go
 				// back and move the range's start, not how you abandon it.
 				// Target mode's confirmation instead cancels the move (§2.7).
 				u.confirm, u.pending, u.pendingBusy = "", nil, ""
+				u.squash = nil
 				u = u.cancelMove()
 			}
 			return u, nil
@@ -918,6 +952,12 @@ func (u uiModel) pickerView() string {
 func (u uiModel) View() string {
 	if u.quitting {
 		return ""
+	}
+	if u.squash != nil && u.squash.sum != nil {
+		return u.reviewView()
+	}
+	if u.squash != nil && u.busy != "" {
+		return u.summarisingView()
 	}
 	if u.labelling != nil {
 		return fmt.Sprintf("Label this turn:  %s\n\n  %q\n\n[enter] save   [esc] cancel   (empty clears)\n",

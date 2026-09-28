@@ -235,14 +235,15 @@ func (w *world) open(current string) uiModel {
 }
 
 // drive feeds msgs to Update and runs every command it returns on the spot,
-// feeding its message back in, until the loop settles or quits.
+// feeding its message back in, until the loop settles or quits. A squash's
+// clock is not run (see run), so a squash settles in its review.
 func drive(t *testing.T, u uiModel, msgs ...tea.Msg) uiModel {
 	t.Helper()
 	for _, m := range msgs {
 		next, cmd := u.Update(m)
 		u = next.(uiModel)
 		for cmd != nil {
-			out := cmd()
+			out := run(cmd)
 			if _, ok := out.(tea.QuitMsg); ok {
 				break
 			}
@@ -719,7 +720,7 @@ func TestScenarioSquashIntoAcrossBranches(t *testing.T) {
 	if !strings.Contains(u.confirm, "merged into "+shortID(sidT)) || !strings.Contains(u.confirm, "dropped from "+shortID(b)) {
 		t.Fatalf("confirmation:\n%s", u.confirm)
 	}
-	u = drive(t, u, enter)
+	u = drive(t, u, enter, enter) // confirm, then commit the review
 	if w.summaries() != 1 {
 		t.Fatalf("%d summary calls, want 1; status %q", w.summaries(), u.status)
 	}
@@ -762,7 +763,7 @@ func TestScenarioSquashIntoAcrossBranches(t *testing.T) {
 	if !strings.Contains(u.confirm, "branches at "+shortID(c)) {
 		t.Fatalf("confirmation:\n%s", u.confirm)
 	}
-	u = drive(t, u, enter)
+	u = drive(t, u, enter, enter) // confirm, then commit the review
 	t2 := w.replacement(t1)
 	if !strings.HasPrefix(u.status, "squashed into "+shortID(c)+", dropped 2 turns from "+shortID(t1)) {
 		t.Fatalf("status %q", u.status)
@@ -825,7 +826,7 @@ func TestScenarioAChainOfReplacements(t *testing.T) {
 
 	// 1. squash T's turn 1.
 	u := selectRange(t, w.open(sidT), sidT, "t1-p", "t1-r", 0)
-	u = drive(t, u, enter)
+	u = drive(t, u, enter, enter) // confirm, then commit the review
 	t1 := w.replacement(sidT)
 	if first := u.m.Rows()[0]; first.Node.SessionID != t1 {
 		t.Fatalf("scope did not follow the replacement: %q", screen(u)[0])
@@ -852,7 +853,7 @@ func TestScenarioAChainOfReplacements(t *testing.T) {
 
 	// 3. squash T's turn 5: the drop's marker is still owed at t4.
 	u = selectRange(t, u, t2, "t5-p", "t5-r", 0)
-	u = drive(t, u, enter)
+	u = drive(t, u, enter, enter) // confirm, then commit the review
 	t3 := w.replacement(t2)
 	if w.summaries() != 2 {
 		t.Errorf("%d summary calls, want 2", w.summaries())
@@ -899,7 +900,7 @@ func TestScenarioHandoverAfterSeveralEdits(t *testing.T) {
 			w.h.panes[sidT] = [2]string{"pane-T", "idle"}
 
 			u := selectRange(t, w.open(sidT), sidT, "t2-p", "t2-r", 0)
-			u = drive(t, u, enter)
+			u = drive(t, u, enter, enter) // confirm, then commit the review
 			t1 := w.replacement(sidT)
 			if !strings.HasSuffix(u.status, "⏎ on it to continue there") {
 				t.Fatalf("squash status %q", u.status)
@@ -966,7 +967,7 @@ func TestScenarioTwoOverlays(t *testing.T) {
 	u1, u2 := w.open(tb), w.open(tb)
 
 	u1 = selectRange(t, u1, tb, "t2-p", "t3-r", 0)
-	u1 = drive(t, u1, enter)
+	u1 = drive(t, u1, enter, enter) // confirm, then commit the review
 	t1 := w.replacement(tb)
 
 	u2 = cursorTo(t, u2, tb, "t4-p")
@@ -997,7 +998,7 @@ func TestScenarioALabelSetOnAReplacementReplacesTheOlderOne(t *testing.T) {
 	w.trunk(sidT, "t1", "t2", "t3")
 	u := drive(t, cursorTo(t, w.open(sidT), sidT, "t3-p"), key('L'))
 	u = drive(t, u, append(typed("keep"), enter)...)
-	u = drive(t, selectRange(t, u, sidT, "t1-p", "t1-r", 0), enter)
+	u = drive(t, selectRange(t, u, sidT, "t1-p", "t1-r", 0), enter, enter) // confirm, then commit the review
 	t1 := w.replacement(sidT)
 	if got := rowText(u, t1, "t3-p"); !strings.Contains(got, "★ keep") {
 		t.Fatalf("t3 in the replacement renders %q, want the label carried over", got)
@@ -1104,7 +1105,7 @@ func TestAnEditIsRefusedIfItsLineIsReplacedDuringTheSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	u2 = drive(t, selectRange(t, u2, sidT, "t3-p", "t4-r", 0), enter)
+	u2 = drive(t, selectRange(t, u2, sidT, "t3-p", "t4-r", 0), enter, enter) // confirm, then commit the review
 	if u2.status != "summary stored — "+staleLine {
 		t.Fatalf("status %q", u2.status)
 	}
@@ -1266,7 +1267,7 @@ func TestBranchHereMidLineShowsTheBranch(t *testing.T) {
 	if u.menu != "place" {
 		t.Fatalf("no place menu: %q", u.status)
 	}
-	u = drive(t, u, down, enter, enter) // branch here, confirm
+	u = drive(t, u, down, enter, enter, enter) // branch here, confirm, commit the review
 	st, _ := store.Load(w.repo)
 	var d string
 	for id, br := range st.Branches {
@@ -1546,7 +1547,7 @@ func TestAMergedSummaryStartsItsOwnSection(t *testing.T) {
 	// Squash all of B, storing a summary p can later place elsewhere.
 	u := allOf(w.open(c))
 	u = selectRange(t, u, b, "BEATS-p", "BEATS22-r", 0)
-	u = drive(t, u, enter)
+	u = drive(t, u, enter, enter) // confirm, then commit the review
 	if w.summaries() != 1 {
 		t.Fatalf("%d summary calls, want 1; status %q", w.summaries(), u.status)
 	}
@@ -1639,7 +1640,7 @@ func TestASquashSeedStartsTheFirstSection(t *testing.T) {
 	w := newWorld(t)
 	w.trunk(sidT, "t1", "t2", "t3")
 	u := selectRange(t, w.open(sidT), sidT, "t1-p", "t1-r", 0)
-	u = drive(t, u, enter)
+	u = drive(t, u, enter, enter) // confirm, then commit the review
 	r := w.replacement(sidT)
 
 	rows := allOf(w.open(r)).m.Rows()

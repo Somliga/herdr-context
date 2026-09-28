@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"herdr-tree/internal/adapter"
 	"herdr-tree/internal/store"
@@ -31,7 +32,7 @@ type editOp struct {
 	src       adapter.Session
 	edit      adapter.Edit
 	kind      string     // store.KindCompacted | KindCut | KindInserted
-	summarise bool       // compact: the seed is produced first
+	summarise bool       // squash: the seed is a summary already made and stored
 	from, to  *tree.Node // compact: the range to summarise
 	title     string     // row title for the new record
 	dst       string
@@ -55,6 +56,131 @@ func summariseRange(a adapter.Adapter, st *store.Store, op editOp) (store.Summar
 	return sum, ""
 }
 
+// squashing is a squash or squash into… from its confirmation until it lands
+// or is cancelled (§2.9). The confirmation's command summarises and stores;
+// the summary is read in review, and commit runs everything after it.
+type squashing struct {
+	first, last int
+	src         string
+	figures     string // the Preview figures the confirmation showed
+	then        string // the confirmation's Then: line, after "Then: "
+	commit      func(store.Summary) tea.Cmd
+	since, now  time.Time      // summarising: its start and the latest tick
+	sum         *store.Summary // set once made: the review
+	scroll      int
+}
+
+// summarisedMsg is a squash's summary, made and stored: the review opens.
+type summarisedMsg struct{ sum store.Summary }
+
+// tickMsg advances the summarising view's spinner and clock.
+type tickMsg time.Time
+
+func tick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// summariseCmd is a squash up to its review: refused says why it may not
+// start, before anything is paid, and then the summary is made and stored.
+func summariseCmd(a adapter.Adapter, st *store.Store, op editOp, refused func() string) tea.Cmd {
+	return func() tea.Msg {
+		if why := refused(); why != "" {
+			return actionDoneMsg{status: why}
+		}
+		sum, failed := summariseRange(a, st, op)
+		if failed != "" {
+			return actionDoneMsg{status: failed}
+		}
+		return summarisedMsg{sum}
+	}
+}
+
+var spinner = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// summarisingView is the overlay while a squash's summary is made (§2.9).
+func (u uiModel) summarisingView() string {
+	sq := u.squash
+	elapsed := sq.now.Sub(sq.since).Truncate(time.Second)
+	s := fmt.Sprintf("Summarising turns %d–%d of %s\n\nthe model is reading %s\n\n%s %s\n\nctrl+c leaves (the call is already billed)\n",
+		sq.first, sq.last, shortID(sq.src), sq.figures, spinner[int(elapsed.Seconds())%len(spinner)], elapsed)
+	if u.abandoning {
+		s += "this call is already billed; ctrl+c again to leave it running\n"
+	}
+	return s
+}
+
+// reviewLines is the summary wrapped to the review box, and how many of its
+// lines the box shows at once.
+func (u uiModel) reviewLines() ([]string, int) {
+	width, height := u.width, u.height
+	if width <= 0 {
+		width = 80
+	}
+	if height <= 0 {
+		height = 24
+	}
+	// The border and a space of padding on each side.
+	text := lipgloss.NewStyle().Width(max(width-4, 10)).Render(u.squash.sum.Text)
+	// The header, a blank, the two borders, the Then: line, a blank, the footer.
+	return strings.Split(text, "\n"), max(height-7-strings.Count(u.squash.then, "\n"), 3)
+}
+
+// reviewView shows the summary just made, in full, before anything is
+// written (§2.9). It is the one place a summary is shown.
+func (u uiModel) reviewView() string {
+	sq := u.squash
+	lines, show := u.reviewLines()
+	end := min(sq.scroll+show, len(lines))
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Render(strings.Join(lines[sq.scroll:end], "\n"))
+	where := ""
+	if len(lines) > show {
+		where = fmt.Sprintf(" (lines %d–%d of %d)", sq.scroll+1, end, len(lines))
+	}
+	return fmt.Sprintf("Squash turns %d–%d — review the summary\n\n%s\nThen: %s\n\n↑↓ scroll%s   [enter] commit   [esc] cancel, the summary stays stored for p\n",
+		sq.first, sq.last, box, sq.then, where)
+}
+
+// reviewKey is a key in the review: ⏎ runs the rest of the squash, esc
+// writes nothing and leaves the summary stored, arrows scroll, and every
+// other key is swallowed.
+func (u uiModel) reviewKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	sq := *u.squash
+	lines, show := u.reviewLines()
+	switch msg.String() {
+	case "up", "k":
+		sq.scroll--
+	case "down", "j":
+		sq.scroll++
+	case "pgup":
+		sq.scroll -= show
+	case "pgdown":
+		sq.scroll += show
+	case "enter":
+		u.squash, u.busy = nil, "squashing…"
+		return u, sq.commit(*sq.sum)
+	case "esc":
+		u.squash = nil
+		u.status = "cancelled — nothing was written; the summary is stored for p"
+		return u, nil
+	}
+	sq.scroll = max(0, min(sq.scroll, len(lines)-show))
+	u.squash = &sq
+	return u, nil
+}
+
+// squashCmd is squash's confirmed edit (§4), split at its review (§2.9):
+// summarise makes and stores the summary unless the line was changed
+// elsewhere; commit splices it in as the seed, through editCmd's re-checks.
+func squashCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) (summarise tea.Cmd, commit func(store.Summary) tea.Cmd) {
+	summarise = summariseCmd(a, st, op, func() string { return changedElsewhere(st, op.src.ID) })
+	commit = func(sum store.Summary) tea.Cmd {
+		op.edit.Seed = foldBackSeed(op.from, sum, true)
+		op.title = "⤶ " + title(sum.Text, 40)
+		return editCmd(a, st, op, live)
+	}
+	return summarise, commit
+}
+
 // foldMove is target mode's hand (§2.7): the range still to be summarised,
 // and its drop from the source, both run only once the target is confirmed.
 type foldMove struct {
@@ -63,6 +189,7 @@ type foldMove struct {
 	cut         editOp
 	first, last int    // the widened range, for the texts
 	cost        string // the cost text, up to "Then: "
+	figures     string
 }
 
 // note is what the place menu and every confirmation on the move add.
@@ -91,40 +218,43 @@ func changedElsewhere(st *store.Store, sids ...string) string {
 	return ""
 }
 
-// moveCmd is squash into…'s confirmed move (§2.7): the source is asked, the
-// summary made and stored, land writes it at the target, and cutAfter drops
-// the range from the source. Each runs only if the one before succeeded.
+// moveCmd is squash into…'s confirmed move (§2.7), split at its review
+// (§2.9): summarise asks the source and makes and stores the summary; commit
+// has land write it at the target, and cutAfter drop the range from the
+// source. Each runs only if the one before succeeded.
 //
 // merge says land splices target, so target is checked as well as the source.
 // A branch or a send leaves target as it is and may start from an old line.
-func moveCmd(a adapter.Adapter, st *store.Store, mv foldMove, target string, merge bool, live LiveFunc, land func(store.Summary) tea.Cmd) tea.Cmd {
+func moveCmd(a adapter.Adapter, st *store.Store, mv foldMove, target string, merge bool, live LiveFunc, land func(store.Summary) tea.Cmd) (summarise tea.Cmd, commit func(store.Summary) tea.Cmd) {
 	lines := []string{mv.cut.src.ID}
 	if merge {
 		lines = append(lines, target)
 	}
-	return func() tea.Msg {
+	summarise = summariseCmd(a, st, mv.op, func() string {
 		if stale := changedElsewhere(st, lines...); stale != "" {
-			return actionDoneMsg{status: stale}
+			return stale
 		}
 		if live != nil {
 			_, status, err := live(mv.cut.src.ID)
 			if err != nil {
-				return actionDoneMsg{status: "cannot tell whether the source is busy: " + err.Error() + " — nothing was paid or written"}
+				return "cannot tell whether the source is busy: " + err.Error() + " — nothing was paid or written"
 			}
 			if busy(status) {
-				return actionDoneMsg{status: "the source's agent is " + status + " — wait for it to finish; nothing was paid or written"}
+				return "the source's agent is " + status + " — wait for it to finish; nothing was paid or written"
 			}
 		}
-		sum, failed := summariseRange(a, st, mv.op)
-		if failed != "" {
-			return actionDoneMsg{status: failed}
-		}
+		return ""
+	})
+	commit = func(sum store.Summary) tea.Cmd {
 		mv.sum = sum
-		if stale := changedElsewhere(st, lines...); stale != "" {
-			return actionDoneMsg{status: "summary stored — " + stale}
+		return func() tea.Msg {
+			if stale := changedElsewhere(st, lines...); stale != "" {
+				return actionDoneMsg{status: "summary stored — " + stale}
+			}
+			return cutAfter(land(sum), a, st, mv, target, live)()
 		}
-		return cutAfter(land(sum), a, st, mv, target, live)()
 	}
+	return summarise, commit
 }
 
 // cutAfter runs fold and, only if it landed, drops mv's range from its
@@ -161,9 +291,11 @@ func cutAfter(fold tea.Cmd, a adapter.Adapter, st *store.Store, mv foldMove, tar
 // lands at the target and what leaves the source (§2.7).
 func (u uiModel) confirmMove(at *tree.Node, then string, merge bool, land func(store.Summary) tea.Cmd) (tea.Model, tea.Cmd) {
 	mv := u.folding
-	u.confirm = fmt.Sprintf("%s%s · turns %d–%d are dropped from %s\n\n[enter] go   [esc] back",
-		mv.cost, then, mv.first, mv.last, shortID(mv.cut.src.ID))
-	u.pending, u.pendingBusy = moveCmd(u.a, u.st, *mv, at.SessionID, merge, u.live, land), "summarising…"
+	then = fmt.Sprintf("%s · turns %d–%d are dropped from %s", then, mv.first, mv.last, shortID(mv.cut.src.ID))
+	u.confirm = mv.cost + then + "\n\n[enter] go   [esc] back"
+	summarise, commit := moveCmd(u.a, u.st, *mv, at.SessionID, merge, u.live, land)
+	u.pending, u.pendingBusy = summarise, "summarising…"
+	u.squash = &squashing{first: mv.first, last: mv.last, src: mv.cut.src.ID, figures: mv.figures, then: then, commit: commit}
 	return u, nil
 }
 
@@ -192,16 +324,11 @@ func verb(kind string) string {
 // is the user's own ⏎ (§6.2).
 func editCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) tea.Cmd {
 	return func() tea.Msg {
-		if stale := changedElsewhere(st, op.src.ID); stale != "" {
-			return actionDoneMsg{status: stale}
-		}
-		if op.summarise {
-			sum, failed := summariseRange(a, st, op)
-			if failed != "" {
-				return actionDoneMsg{status: failed}
+		// A squash was asked before its summary, by summariseCmd.
+		if !op.summarise {
+			if stale := changedElsewhere(st, op.src.ID); stale != "" {
+				return actionDoneMsg{status: stale}
 			}
-			op.edit.Seed = foldBackSeed(op.from, sum, true)
-			op.title = "⤶ " + title(sum.Text, 40)
 		}
 		if live != nil {
 			// The summary call takes minutes, and a pane may have opened on
@@ -381,19 +508,23 @@ func (u uiModel) editConfirm(kind string) (tea.Model, tea.Cmd) {
 	}
 	cost := fmt.Sprintf("%s turns %d–%d:\n\n  from  %q\n  to    %q\n\nThe model reads this session up to the end of the range — %d turn(s) · %d entries · %s — and describes only the range. That whole prefix is billed.\n\nThen: ",
 		heading, sp.First, sp.Last, from.Node.Title, to.Node.Title, turns, entries, humanBytes(size))
+	figures := fmt.Sprintf("%d turns · %d entries · %s", turns, entries, humanBytes(size))
 	if kind == kindFold {
 		// Target mode: nothing is paid or written until the target is
 		// confirmed (§2.7).
 		cut := op
 		cut.kind = store.KindCut
-		u.folding = &foldMove{op: op, cut: cut, first: sp.First, last: sp.Last, cost: cost}
+		u.folding = &foldMove{op: op, cut: cut, first: sp.First, last: sp.Last, cost: cost, figures: figures}
 		u.m.CancelRange()
 		u.status = fmt.Sprintf("move to a turn and press ⏎ to squash turns %d–%d into it · esc cancels", sp.First, sp.Last)
 		return u, nil
 	}
-	u.confirm = cost + fmt.Sprintf("turns %d–%d are replaced by the summary.\n%s", sp.First, sp.Last, replacesLine) + "\n\n[enter] go   [esc] back"
+	then := fmt.Sprintf("turns %d–%d are replaced by the summary.\n%s", sp.First, sp.Last, replacesLine)
+	u.confirm = cost + then + "\n\n[enter] go   [esc] back"
 	op.summarise = true
-	u.pending, u.pendingBusy = editCmd(u.a, u.st, op, u.live), "summarising…"
+	summarise, commit := squashCmd(u.a, u.st, op, u.live)
+	u.pending, u.pendingBusy = summarise, "summarising…"
+	u.squash = &squashing{first: sp.First, last: sp.Last, src: src.ID, figures: figures, then: then, commit: commit}
 	return u, nil
 }
 
