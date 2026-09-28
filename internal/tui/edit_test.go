@@ -2,10 +2,12 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"herdr-tree/internal/adapter"
 	"herdr-tree/internal/store"
@@ -740,5 +742,48 @@ func TestFooterNamesContinueAndBranch(t *testing.T) {
 	v := u.View()
 	if !strings.Contains(v, "⏎ continue here") || !strings.Contains(v, "b branch") {
 		t.Fatalf("footer missing ⏎/b wording:\n%s", v)
+	}
+}
+
+// Every footer fits an 80-column terminal, and the rows leave it room: the
+// whole view fits the height, so no key's name is cut off.
+func TestEveryFooterFitsIn80Columns(t *testing.T) {
+	var ids []string
+	for i := 0; i < 40; i++ {
+		ids = append(ids, fmt.Sprintf("t%d", i))
+	}
+	for _, state := range []string{"normal", "all, human", "range", "moving"} {
+		u := uiModel{m: New(session("s", ids...)), st: loadedStore(t), current: "s", width: 80, height: 24,
+			status: "branched 1a2b3c4d — ⏎ on it to open it"}
+		u.m.SetTrunk(map[string]bool{"s": true})
+		want := []string{"↑↓ move", "←→ fold", "⏎ continue here", "b branch", "s select", "m move", "p place", "L label", "a scope:this session", "f filter:all", "esc close"}
+		switch state {
+		case "all, human":
+			u.scopeAll = true
+			u.m.CycleFilter()
+			want = []string{"a scope:all sessions", "f filter:human", "esc close"}
+		case "range":
+			u.m.RangeEnd = u.m.Selected()
+			want = []string{"esc cancel range"}
+		case "moving":
+			n := u.m.Rows()[3].Node
+			u.moving = &carry{n: n, head: n, rows: map[*tree.Node]bool{n: true}}
+			want = []string{"esc put it back"}
+		}
+		lines := strings.Split(strings.TrimSuffix(u.View(), "\n"), "\n")
+		if len(lines) > u.height {
+			t.Errorf("%s: %d lines on a %d-line terminal", state, len(lines), u.height)
+		}
+		for _, l := range lines {
+			if w := lipgloss.Width(l); w > u.width {
+				t.Errorf("%s: a %d-column line: %q", state, w, l)
+			}
+		}
+		v := u.View()
+		for _, k := range want {
+			if !strings.Contains(v, k) {
+				t.Errorf("%s: footer lacks %q:\n%s", state, k, v)
+			}
+		}
 	}
 }

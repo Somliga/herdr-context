@@ -1009,7 +1009,20 @@ func (u uiModel) View() string {
 	if len(u.m.Rows()) == 0 {
 		b.WriteString("No Claude sessions found for this directory.\n")
 	}
-	height := u.height - 4 // header, blank, footer, status
+	scope := "this session"
+	if u.scopeAll {
+		scope = "all sessions"
+	}
+	// Every footer fits 80 columns; the normal one takes two lines.
+	footer := fmt.Sprintf("↑↓ move  ←→ fold  ⏎ continue here  b branch  s select  m move  p place a summary\nL label  a scope:%s  f filter:%s  esc close\n", scope, u.m.Filter)
+	if u.moving != nil {
+		footer = "↑↓ move to a turn  ⏎ put it after this turn  esc put it back\n"
+	} else if u.m.RangeEnd != nil {
+		// While a range is being selected, three keys change meaning. Saying
+		// so is cheaper than the user discovering that esc no longer closes.
+		footer = "↑↓ move to the range's start  s/⏎ choose what to do  esc cancel range\n"
+	}
+	height := u.height - 3 - strings.Count(footer, "\n") // blank, counter, footer, status
 	if height < 5 {
 		height = 5
 	}
@@ -1073,19 +1086,7 @@ func (u uiModel) View() string {
 	} else {
 		b.WriteString("\n")
 	}
-	scope := "this session"
-	if u.scopeAll {
-		scope = "all sessions"
-	}
-	if u.moving != nil {
-		b.WriteString("↑↓ move to a turn  ⏎ put it after this turn  esc put it back\n")
-	} else if u.m.RangeEnd != nil {
-		// While a range is being selected, three keys change meaning. Saying
-		// so is cheaper than the user discovering that esc no longer closes.
-		b.WriteString("↑↓ move to the range's start  s/⏎ choose what to do  esc cancel range\n")
-	} else {
-		b.WriteString(fmt.Sprintf("↑↓ move  ←→ fold  ⏎ continue here  b branch  s select  m move  p place a summary  L label  a scope:%s  f filter:%s  esc close\n", scope, u.m.Filter))
-	}
+	b.WriteString(footer)
 	if u.busy != "" {
 		b.WriteString(u.busy + "\n")
 		if u.abandoning {
