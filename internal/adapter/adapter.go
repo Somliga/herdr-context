@@ -40,7 +40,21 @@ type Node struct {
 	// AfterCompact marks the first node after a native /compact: the line's
 	// context starts here, everything before it is Claude Code's summary.
 	AfterCompact bool
+	// TurnTokens is a head node's turn size (§3.1 of the sidebar spec), 0 on
+	// other nodes; TurnEstimated marks the bytes fallback.
+	TurnTokens    int
+	TurnEstimated bool
 }
+
+// Breakdown is a line's context split by type (§3.2 of the sidebar spec), in
+// the order Types names. Estimated means no real total scaled it.
+type Breakdown struct {
+	Tokens    [6]int
+	Estimated bool
+}
+
+// Types are Breakdown's labels, in order.
+var Types = [6]string{"thinking", "tool calls", "tool results", "replies", "typed", "injected"}
 
 // Session is one agent session: a linear path of turns.
 type Session struct {
@@ -56,6 +70,8 @@ type Session struct {
 	// undo/redo and context meter spec): 0 means unknown. An edited line with
 	// no reply of its own has 0 here; its estimate lives in the store.
 	ContextTokens int
+	// Breakdown is the current line's context split by type (§3.2).
+	Breakdown Breakdown
 }
 
 // Pane is what Herdr reports about the invoking pane.

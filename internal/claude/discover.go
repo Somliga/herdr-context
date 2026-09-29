@@ -146,17 +146,21 @@ func Discover(repoRoot string) ([]adapter.Session, error) {
 		if serr == nil {
 			updated = st.ModTime()
 		}
+		nodes := Entries(es)
+		turnSizes(es, nodes)
+		ctx := contextTokens(es)
 		out = append(out, adapter.Session{
 			ID:      id,
 			CWD:     cwd,
 			Path:    p,
 			Title:   SessionTitle(es),
 			Updated: updated,
-			Nodes:   Entries(es),
+			Nodes:   nodes,
 			// A skipped line means the chain may have holes. Surface it as ⚠
 			// rather than rendering a partial conversation as if complete.
 			Broken:        skipped > 0,
-			ContextTokens: contextTokens(es),
+			ContextTokens: ctx,
+			Breakdown:     breakdown(es, ctx),
 		})
 	}
 	// Stable so sessions with identical mtimes keep a deterministic order.
