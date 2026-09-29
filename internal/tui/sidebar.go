@@ -14,6 +14,12 @@ import (
 const (
 	sidebarWidth = 26
 	sidebarMin   = 110
+	// sidebarRows is the sidebar's height when everything is known: a
+	// header line plus one bar per type (§4). The rows area must have at
+	// least this many lines of budget, or the sidebar is not shown — a
+	// shorter viewport would otherwise be padded up to this height,
+	// pushing the counter, footer and status off screen.
+	sidebarRows = 1 + len(adapter.Types)
 )
 
 // sidebarLines renders the context sidebar (§4): a "context" header line,

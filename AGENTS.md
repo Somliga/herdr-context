@@ -41,14 +41,14 @@ behaviour is in `README.md`.
 Key files and functions:
 
 - `internal/claude/graft.go` — `Select` (the ancestor chain kept by a graft), `Graft`, `GraftSeeded`, `writeSession` (0600 atomic), `checkVersion` (2.1 only).
-- `internal/claude/line.go` — `buildLine`: a session's current line split into turns; `tipReaching`; `ErrNotOnLine`.
+- `internal/claude/line.go` — `buildLine`: a session's current line split into turns; `tipReaching`; `ErrNotOnLine`; `contextTokens` (§3.1 the line's last reply's context number).
 - `internal/claude/splice.go` — `Widen` (a range to whole turns),
   `WidenBranch` (one turn for ⏎/`b`/branch here, on the line it is on even
   off the current one), `Splice` (squash / drop / merge / move in one operation; cross-line moves renew ids).
 - `internal/claude/entries.go` — `Classify`, `Entries`, `SummaryPrefix` / `CompactionPrefix`, the `<pasted_content>` unwrap.
 - `internal/claude/summarise.go` — `CompactPrompt`, `Summarise` (`claude -p --resume` on a throwaway graft, timeout, stderr scrubbed).
 - `internal/claude/discover.go` — `Discover`, `ProjectsDir` (`CLAUDE_PROJECTS_DIR` overrides).
-- `internal/claude/context.go` — `contextTokens`, `turnSizes` (§3.1 per-turn growth and its fallbacks), `breakdown` (§3.2 the line's context split by type).
+- `internal/claude/context.go` — `turnSizes` (§3.1 per-turn growth and its fallbacks), `breakdown` (§3.2 the line's context split by type), `outputTokens` / `turnBytes` / `blockBytes` (its helpers).
 - `internal/herdr/herdr.go` — `AgentState` (pane + `agent_status`), `AgentForSession`, `AgentPrompt`, `ClosePane`, `Split`, `AgentStart`, `checkArg`.
 - `internal/store/store.go` — `Load`, `Save` (merge with disk, `replaced_by` one-way), `Replace`, `Current` (skips undone versions), `CurrentOnDisk`, `Lineage`, `Group` (a move's two records), `Versions`, `SetLabel`, `AddSummary`.
 - `internal/tree/tree.go` — `Build`: hiding replaced lines, re-attaching branches through `Current`, `attachPoint`, drop/move markers along the `replaces` chain.

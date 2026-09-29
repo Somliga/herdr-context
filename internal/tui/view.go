@@ -1155,7 +1155,6 @@ func (u uiModel) View() string {
 	// Every footer fits 80 columns; the normal one takes two lines. A wide
 	// enough pane adds the sidebar toggle to the second line — there is
 	// room to spare once the sidebar itself fits (§4).
-	showSidebar := u.width >= sidebarMin && !u.sidebarOff
 	footerLine2 := fmt.Sprintf("L label  a scope:%s  f filter:%s  u undo  U redo  esc close", scope, u.m.Filter)
 	if u.width >= sidebarMin {
 		footerLine2 += "  c context"
@@ -1175,6 +1174,9 @@ func (u uiModel) View() string {
 	if u.moving != nil {
 		height-- // the section in hand, drawn after the cursor's turn
 	}
+	// The sidebar is sidebarRows tall; a shorter rows budget would be padded
+	// up to it, pushing the counter, footer and status off screen (§4).
+	showSidebar := u.width >= sidebarMin && !u.sidebarOff && height >= sidebarRows
 	rows, start, total := u.m.Window(height)
 	// A bar takes 2 columns of its own, on top of the marker's 2, so the row
 	// text is narrowed to keep the whole line within rowsWidth. rowsWidth is

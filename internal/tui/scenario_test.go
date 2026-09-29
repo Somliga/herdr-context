@@ -1303,7 +1303,23 @@ func headersFamily(t *testing.T) (uiModel, string, string) {
 func rowLines(t *testing.T, u uiModel) (lines []string, cursor int) {
 	t.Helper()
 	cursor = -1
-	for i, l := range strings.Split(u.View(), "\n") {
+	viewLines := strings.Split(u.View(), "\n")
+	// lipgloss.JoinHorizontal pads every row line to a common width before
+	// the sidebar's "│" separator, so when it is drawn it sits at the same
+	// column on every line. That column is found once, from the first row
+	// (always a session id, never arbitrary content), and used as a fixed
+	// cut point — not searched for per line — so a row's own title
+	// containing "│" elsewhere cannot be mistaken for the separator.
+	sepAt := -1
+	if len(viewLines) > 0 {
+		for i, r := range []rune(viewLines[0]) {
+			if r == '│' {
+				sepAt = i
+				break
+			}
+		}
+	}
+	for i, l := range viewLines {
 		if l == "" {
 			break
 		}
@@ -1313,10 +1329,12 @@ func rowLines(t *testing.T, u uiModel) (lines []string, cursor int) {
 			}
 			cursor = i
 		}
-		l = l[2:]
-		if idx := strings.Index(l, "│"); idx >= 0 {
-			l = l[:idx]
+		if sepAt >= 0 {
+			if r := []rune(l); sepAt < len(r) && r[sepAt] == '│' {
+				l = string(r[:sepAt])
+			}
 		}
+		l = l[2:]
 		lines = append(lines, strings.TrimRight(l, " "))
 	}
 	return lines, cursor
@@ -1371,11 +1389,7 @@ func TestTheCursorNeverSitsOnAHeader(t *testing.T) {
 // off screen, and the header of the cursor's row is drawn with it.
 func TestTheWindowFitsLinesAndKeepsTheCursorsHeader(t *testing.T) {
 	u, _, _ := headersFamily(t)
-	u.height = 9 // five lines of rows
-	// The sidebar is 7 lines tall regardless of the viewport, which is not
-	// what this test is about: a tiny window pads the rows block up to the
-	// sidebar's height, and this test cares about the rows alone.
-	u.sidebarOff = true
+	u.height = 9 // five lines of rows, under the sidebar's own height: hidden
 	for i := range u.m.Rows() {
 		u.m.Cursor = i
 		lines, cur := rowLines(t, u)
@@ -2075,6 +2089,27 @@ func TestScenarioTheSidebarShowsAtWidth110(t *testing.T) {
 	v = u.View()
 	if !strings.Contains(v, "│") || !strings.Contains(v, "thinking") {
 		t.Fatalf("a second c did not bring the sidebar back:\n%s", v)
+	}
+}
+
+// A pane wide enough for the sidebar but too short to hold it must not show
+// it: the sidebar is a fixed sidebarRows tall, and padding the rows block up
+// to that height would push the counter, footer and status off screen.
+func TestScenarioTheSidebarIsHiddenWhenTheRowsBudgetIsShort(t *testing.T) {
+	w := newWorld(t)
+	w.trunk(sidT, "t1", "t2")
+
+	// height budget = u.height - 5, clamped to >= 5; 9 keeps it under
+	// sidebarRows (7).
+	u := drive(t, w.open(sidT), tea.WindowSizeMsg{Width: 110, Height: 9})
+	v := u.View()
+	if strings.Contains(v, "│") {
+		t.Fatalf("sidebar shown despite a short rows budget:\n%s", v)
+	}
+	off := u
+	off.sidebarOff = true
+	if got, want := len(strings.Split(v, "\n")), len(strings.Split(off.View(), "\n")); got != want {
+		t.Fatalf("line count %d, want %d (explicitly hidden) for the same short pane:\n%s", got, want, v)
 	}
 }
 
