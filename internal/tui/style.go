@@ -86,9 +86,31 @@ func styleFor(n *tree.Node, currentTip bool) StyleKey {
 // render applies a style to text. renderRow itself stays plain text so its
 // output remains assertable; View is the only caller of render.
 func render(s StyleKey, text string) string {
+	return renderOn(BandNone, s, text)
+}
+
+// styleNone renders plain text (on a band, the band alone).
+const styleNone StyleKey = -1
+
+// bands are the row backgrounds: faint for a range, stronger for the cursor.
+var bands = map[Band]lipgloss.AdaptiveColor{
+	BandRange:  {Light: "255", Dark: "235"},
+	BandCursor: {Light: "253", Dark: "238"},
+}
+
+// renderOn is render on a row's band. Every segment of a banded row is
+// rendered with the band itself: an inner segment's reset would otherwise
+// end an outer background mid-line.
+func renderOn(band Band, s StyleKey, text string) string {
 	st, ok := palette[s]
 	if !ok {
-		return text
+		if band == BandNone {
+			return text
+		}
+		st = lipgloss.NewStyle()
+	}
+	if c, ok := bands[band]; ok {
+		st = st.Background(c)
 	}
 	return st.Render(text)
 }

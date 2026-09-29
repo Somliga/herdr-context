@@ -106,14 +106,8 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 	var b strings.Builder
 	b.WriteString(strings.Repeat("  ", r.Depth))
 
-	if r.InRange {
-		b.WriteString("┃ ")
-	}
 	if r.Group && r.GroupClosed {
 		b.WriteString(groupText(r))
-		if r.InRange {
-			return fit(b.String(), width), StyleRange
-		}
 		return fit(b.String(), width), StyleClaude
 	}
 	if r.Node.Broken {
@@ -162,20 +156,45 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 	if r.Node.Compacted && key != StyleBroken && key != StyleCurrent {
 		key = StyleMuted // an old turn inside an open group
 	}
-	// A range in progress is the thing the user is actively manipulating, so
-	// it takes the colour slot from rows whose colour is only decorative.
-	// It does NOT take it from a row whose colour is carrying something:
-	// Broken is data integrity, and the two summary colours are the only
-	// thing separating "knowledge arrived" from "this line contracted" at a
-	// glance. Those rows stay themselves; the ┃ still marks them as ranged,
-	// which is precisely why §6b insists the glyph exists.
-	switch {
-	case !r.InRange:
-	case key == StyleBroken, key == StyleImport, key == StyleCompaction:
-	default:
-		key = StyleRange
-	}
+	// A range no longer recolours its rows: every row keeps its own colour,
+	// and the selection is the ┃ in the margin (rowMarker) plus a background
+	// band (bandFor), drawn by View. §6b: the glyph carries it without colour.
 	return line, key
+}
+
+// Band is a row's background: none, the range's faint band, or the
+// cursor's stronger one.
+type Band int
+
+const (
+	BandNone Band = iota
+	BandRange
+	BandCursor
+)
+
+// bandFor is the background a row gets: the cursor's band wins over the
+// range's, so the cursor stays findable inside a selection.
+func bandFor(inRange, cursor bool) Band {
+	switch {
+	case cursor:
+		return BandCursor
+	case inRange:
+		return BandRange
+	}
+	return BandNone
+}
+
+// rowMarker is the row's 2-column margin, drawn cursor first: > for the
+// cursor, then ┃ for a row in the range. Fixed columns, whatever the depth.
+func rowMarker(inRange, cursor bool) (rangeMark, cursorMark string) {
+	rangeMark, cursorMark = " ", " "
+	if inRange {
+		rangeMark = "┃"
+	}
+	if cursor {
+		cursorMark = ">"
+	}
+	return rangeMark, cursorMark
 }
 
 // padCells pads s with spaces to width display cells (ANSI codes not
@@ -1231,11 +1250,13 @@ func (u uiModel) View() string {
 	}
 	placeheld := false
 	for i, r := range rows {
+		cursor := start+i == u.m.Cursor
 		marker := "  "
-		if start+i == u.m.Cursor {
+		if cursor {
 			marker = "> "
 		}
-		bar := rowBar(r, hasCurrent)
+		plainBar := rowBar(r, hasCurrent)
+		bar := plainBar
 		if r.OnTrunk {
 			bar = render(StyleTrunk, bar)
 		}
@@ -1253,8 +1274,28 @@ func (u uiModel) View() string {
 			}
 			placeheld = true
 		} else {
-			text, key := renderRow(r, start+i == u.m.Cursor, u.current, rowsWidth-2-barWidth)
-			rb.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)) + render(StyleClaude, compactNote(r)) + "\n")
+			text, key := renderRow(r, cursor, u.current, rowsWidth-2-barWidth)
+			// The selection is a margin (┃ for the range, > for the cursor)
+			// and a background band across the whole row, padded to the
+			// rows' width so the band reads as a block. Every segment is
+			// rendered on the band: an inner reset would end it mid-line.
+			band := bandFor(r.InRange, cursor)
+			rm, cm := rowMarker(r.InRange, cursor)
+			trunk := styleNone
+			if r.OnTrunk {
+				trunk = StyleTrunk
+			}
+			notes := cutNote(r.Node)
+			cnote := compactNote(r)
+			line := renderOn(band, styleNone, cm) + renderOn(band, StyleRange, rm) + renderOn(band, trunk, plainBar) +
+				renderOn(band, key, text) + renderOn(band, StyleTool, notes) + renderOn(band, StyleClaude, cnote)
+			if band != BandNone && rowsWidth > 0 {
+				used := ansi.StringWidth(cm + rm + plainBar + text + notes + cnote)
+				if pad := rowsWidth - used; pad > 0 {
+					line += renderOn(band, styleNone, strings.Repeat(" ", pad))
+				}
+			}
+			rb.WriteString(line + "\n")
 		}
 		if i == blockAfter {
 			rb.WriteString("  " + rowBar(Row{}, hasCurrent) + render(StyleTool, strings.Repeat("  ", blockDepth)+"⇢ "+u.moving.head.Node.Title) + "\n")

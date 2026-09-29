@@ -96,34 +96,49 @@ func TestCurrentTipIsStyledAndMarked(t *testing.T) {
 	}
 }
 
-// Spec §6b: colour reinforces, it never carries alone. A range that is only
-// a colour is a defect — the ┃ gutter is the range's non-colour carrier.
-func TestRangeRowIsStyledAndMarked(t *testing.T) {
+// Spec §6b: colour reinforces, it never carries alone. The range's
+// non-colour carrier is the ┃ in the margin; the band and cursor mark are
+// View's, so a row's own text and colour are untouched by a selection.
+func TestTheSelectionIsAMarginAndABandNotARowColour(t *testing.T) {
 	n := &tree.Node{Node: adapter.Node{ID: "n1", Kind: adapter.KindAssistant, Title: "reply"}, SessionID: "s"}
-	text, key := renderRow(Row{Node: n, InRange: true}, false, "", 80)
-	if key != StyleRange {
-		t.Fatalf("in-range row styled %v, want StyleRange", key)
+	in, inKey := renderRow(Row{Node: n, InRange: true}, false, "", 80)
+	out, outKey := renderRow(Row{Node: n}, false, "", 80)
+	if in != out || inKey != outKey {
+		t.Fatalf("a range changes the row itself: %q/%v vs %q/%v", in, inKey, out, outKey)
 	}
-	if !strings.Contains(text, "┃") {
-		t.Fatalf("in-range row lacks its glyph: %q", text)
+	for _, c := range []struct {
+		inRange, cursor bool
+		marks           string
+		band            Band
+	}{
+		{false, false, "  ", BandNone},
+		{true, false, " ┃", BandRange},
+		{false, true, "> ", BandCursor},
+		{true, true, ">┃", BandCursor}, // the cursor's band wins inside a range
+	} {
+		rm, cm := rowMarker(c.inRange, c.cursor)
+		if cm+rm != c.marks || bandFor(c.inRange, c.cursor) != c.band {
+			t.Fatalf("range %v cursor %v: marks %q band %v, want %q %v",
+				c.inRange, c.cursor, cm+rm, bandFor(c.inRange, c.cursor), c.marks, c.band)
+		}
 	}
+}
 
-	// A broken session outranks range colouring — data integrity over an
-	// in-progress selection — but must still keep the range's own glyph, so
-	// the row does not silently drop out of the range visually.
-	broken := &tree.Node{SessionID: "s", IsSessionRoot: true, Broken: true}
-	text, key = renderRow(Row{Node: broken, InRange: true}, false, "", 80)
-	if key != StyleBroken {
-		t.Fatalf("a broken row in range styled %v, want StyleBroken", key)
-	}
-	if !strings.Contains(text, "┃") {
-		t.Fatalf("broken-but-in-range row lost its range glyph: %q", text)
-	}
-
-	// A row outside the range gets neither.
-	out, key := renderRow(Row{Node: n}, false, "", 80)
-	if key == StyleRange || strings.Contains(out, "┃") {
-		t.Fatalf("a row outside the range must not carry the range marker: %q key=%v", out, key)
+// A summary row keeps its colour inside a range: the two summary colours are
+// the only at-a-glance difference between "knowledge arrived" and "this line
+// contracted", and a selection must not flatten them.
+func TestARangeKeepsEveryRowsOwnColour(t *testing.T) {
+	for _, c := range []struct {
+		kind adapter.Kind
+		want StyleKey
+	}{
+		{adapter.KindSummaryImport, StyleImport},
+		{adapter.KindSummaryCompaction, StyleCompaction},
+	} {
+		n := &tree.Node{Node: adapter.Node{ID: "n1", Kind: c.kind, Title: "⤶ merged from abc"}, SessionID: "s"}
+		if _, key := renderRow(Row{Node: n, InRange: true}, false, "", 120); key != c.want {
+			t.Fatalf("kind %v in a range styled %v, want %v", c.kind, key, c.want)
+		}
 	}
 }
 
@@ -140,34 +155,5 @@ func TestSummaryRowCarriesExactlyOneMarker(t *testing.T) {
 		if got := strings.Count(text, "⤶"); got != 1 {
 			t.Fatalf("kind %v rendered %d markers, want 1: %q", kind, got, text)
 		}
-	}
-}
-
-// A range takes the colour slot only from rows whose colour is decorative.
-// The two summary colours are the sole at-a-glance difference between
-// "knowledge arrived here" and "this line contracted", so a range sweeping
-// over an earlier summary must not flatten them — the ┃ already says ranged.
-func TestARangeDoesNotTakeTheColourOfARowThatNeedsIt(t *testing.T) {
-	for _, c := range []struct {
-		kind adapter.Kind
-		want StyleKey
-	}{
-		{adapter.KindSummaryImport, StyleImport},
-		{adapter.KindSummaryCompaction, StyleCompaction},
-		{adapter.KindHuman, StyleRange},
-		{adapter.KindAssistant, StyleRange},
-	} {
-		n := &tree.Node{Node: adapter.Node{ID: "n1", Kind: c.kind, Title: "⤶ merged from abc"}, SessionID: "s"}
-		text, key := renderRow(Row{Node: n, InRange: true}, false, "", 120)
-		if key != c.want {
-			t.Fatalf("kind %v in a range styled %v, want %v", c.kind, key, c.want)
-		}
-		if !strings.Contains(text, "┃") {
-			t.Fatalf("kind %v lost the range glyph: %q", c.kind, text)
-		}
-	}
-	broken := &tree.Node{Node: adapter.Node{ID: "n1"}, SessionID: "s", Broken: true}
-	if _, key := renderRow(Row{Node: broken, InRange: true}, false, "", 120); key != StyleBroken {
-		t.Fatalf("broken in a range styled %v, want StyleBroken", key)
 	}
 }

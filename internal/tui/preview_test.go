@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Four turns sized 5005, 35000, 10000, 40000 (ends 5005, 40005, 50005, 90005).
@@ -138,4 +139,20 @@ func rowIDOf(t *testing.T, u uiModel, sid string) string {
 	}
 	t.Fatalf("no row of %s", sid)
 	return ""
+}
+
+// The band spans the whole row: a banded row is padded to the rows' width,
+// so the selection reads as one block, and never beyond it.
+func TestABandedRowFillsTheRowsWidth(t *testing.T) {
+	u := drive(t, heavyWorld(t).open(sidT), tea.WindowSizeMsg{Width: 100, Height: 40})
+	u = cursorTo(t, u, sidT, "t3-p")
+	u = drive(t, u, key('s'))
+	u = cursorTo(t, u, sidT, "t2-p")
+	for _, l := range strings.Split(u.View(), "\n") {
+		plain := ansi.Strip(l)
+		banded := strings.HasPrefix(plain, ">") || strings.HasPrefix(plain, " ┃")
+		if w := ansi.StringWidth(l); banded && w != 100 {
+			t.Fatalf("banded row %d wide, want 100: %q", w, plain)
+		}
+	}
 }
