@@ -22,11 +22,14 @@ type Node struct {
 	SessionTitle    string
 	SessionTokens   int  // the line's context number (§3.1); 0 = unknown
 	TokensEstimated bool // SessionTokens is an edit's estimate, not a reply's
-	IsSessionRoot   bool
-	IsSessionLeaf   bool // the last turn of this session's own chain
-	Grafted         bool // this node starts a session branched from its parent
-	Broken          bool // session present but unreadable or empty
-	FromRemoved     bool // a branch whose turn was removed from the line it left
+	// SessionBreakdown is the line's context split by type (§3.2), copied
+	// from the session wherever SessionTokens is set.
+	SessionBreakdown adapter.Breakdown
+	IsSessionRoot    bool
+	IsSessionLeaf    bool // the last turn of this session's own chain
+	Grafted          bool // this node starts a session branched from its parent
+	Broken           bool // session present but unreadable or empty
+	FromRemoved      bool // a branch whose turn was removed from the line it left
 	// Superseded marks a node copied verbatim from the line a grafted session
 	// left, up to its graft point: the parent already shows this turn, so
 	// this copy of it renders no row (see attachPoint). Its children are
@@ -183,7 +186,7 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 		if len(sess.Nodes) == 0 {
 			n := &Node{
 				SessionID: sess.ID, SessionCWD: sess.CWD, SessionPath: sess.Path, SessionTitle: sess.Title,
-				SessionTokens: tok, TokensEstimated: est,
+				SessionTokens: tok, TokensEstimated: est, SessionBreakdown: sess.Breakdown,
 				IsSessionRoot: true, IsSessionLeaf: true, Broken: true,
 			}
 			chains[sess.ID] = n
@@ -194,7 +197,7 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 			n := &Node{
 				Node: t, SessionID: sess.ID, SessionCWD: sess.CWD,
 				SessionPath: sess.Path, SessionTitle: sess.Title,
-				SessionTokens: tok, TokensEstimated: est,
+				SessionTokens: tok, TokensEstimated: est, SessionBreakdown: sess.Breakdown,
 				IsSessionRoot: i == 0,
 				IsSessionLeaf: i == len(sess.Nodes)-1,
 				Broken:        sess.Broken,

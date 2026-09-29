@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"herdr-tree/internal/adapter"
 	"herdr-tree/internal/store"
@@ -364,6 +365,31 @@ type uiModel struct {
 
 	roots    []*tree.Node // the whole forest
 	scopeAll bool         // false: just the current session's tree
+
+	sidebarOff bool // true: `c` hid the context sidebar
+}
+
+// currentNode finds the node for the session the sidebar tracks: the current
+// session, resolved through any replacement, not the cursor (§4). nil if it
+// is not in the forest shown (a scope that excludes it, or a broken store).
+func (u uiModel) currentNode() *tree.Node {
+	target := u.current
+	if u.st != nil {
+		target = u.st.Current(u.current)
+	}
+	var find func([]*tree.Node) *tree.Node
+	find = func(nodes []*tree.Node) *tree.Node {
+		for _, n := range nodes {
+			if n.SessionID == target {
+				return n
+			}
+			if f := find(n.Children); f != nil {
+				return f
+			}
+		}
+		return nil
+	}
+	return find(u.m.Roots)
 }
 
 // rebuild reapplies the scope, keeping the selected node where it still
@@ -913,7 +939,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.m.Unfold()
 				u.offHand()
 				return u, nil
-			case "s", "p", "b", "m", "u", "U":
+			case "s", "p", "b", "m", "u", "U", "c":
 				return u, nil
 			}
 		}
@@ -1043,6 +1069,12 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "a":
 			u.scopeAll = !u.scopeAll
 			u.rebuild()
+		case "c":
+			// Swallowed mid-range, like u/U.
+			if u.m.RangeEnd != nil {
+				return u, nil
+			}
+			u.sidebarOff = !u.sidebarOff
 		case "f":
 			u.m.CycleFilter()
 		case "L":
@@ -1112,15 +1144,23 @@ func (u uiModel) View() string {
 		return menuView(fmt.Sprintf("Place the summary at:  %q", u.pickAt.Node.Title), placeMenu, u.menuIdx)
 	}
 	var b strings.Builder
+	var rb strings.Builder
 	if len(u.m.Rows()) == 0 {
-		b.WriteString("No Claude sessions found for this directory.\n")
+		rb.WriteString("No Claude sessions found for this directory.\n")
 	}
 	scope := "this session"
 	if u.scopeAll {
 		scope = "all sessions"
 	}
-	// Every footer fits 80 columns; the normal one takes two lines.
-	footer := fmt.Sprintf("↑↓ move  ←→ fold  ⏎ continue here  b branch  s select  m move  p place a summary\nL label  a scope:%s  f filter:%s  u undo  U redo  esc close\n", scope, u.m.Filter)
+	// Every footer fits 80 columns; the normal one takes two lines. A wide
+	// enough pane adds the sidebar toggle to the second line — there is
+	// room to spare once the sidebar itself fits (§4).
+	showSidebar := u.width >= sidebarMin && !u.sidebarOff
+	footerLine2 := fmt.Sprintf("L label  a scope:%s  f filter:%s  u undo  U redo  esc close", scope, u.m.Filter)
+	if u.width >= sidebarMin {
+		footerLine2 += "  c context"
+	}
+	footer := "↑↓ move  ←→ fold  ⏎ continue here  b branch  s select  m move  p place a summary\n" + footerLine2 + "\n"
 	if u.moving != nil {
 		footer = "↑↓ move to a turn  ⏎ put it after this turn  esc put it back\n"
 	} else if u.m.RangeEnd != nil {
@@ -1137,7 +1177,12 @@ func (u uiModel) View() string {
 	}
 	rows, start, total := u.m.Window(height)
 	// A bar takes 2 columns of its own, on top of the marker's 2, so the row
-	// text is narrowed to keep the whole line within u.width.
+	// text is narrowed to keep the whole line within rowsWidth. rowsWidth is
+	// u.width itself, less the sidebar and its separator when it is shown.
+	rowsWidth := u.width
+	if showSidebar {
+		rowsWidth -= sidebarWidth + 1
+	}
 	hasCurrent := len(u.m.OnTrunk) > 0
 	barWidth := 0
 	if hasCurrent {
@@ -1169,27 +1214,58 @@ func (u uiModel) View() string {
 		if r.OnTrunk {
 			bar = render(StyleTrunk, bar)
 		}
-		if h := headerLine(r, u.width-2-barWidth); h != "" {
-			b.WriteString("  " + bar + h + "\n")
+		if h := headerLine(r, rowsWidth-2-barWidth); h != "" {
+			rb.WriteString("  " + bar + h + "\n")
 		}
-		if g := groupLine(r, u.width-2-barWidth); g != "" {
-			b.WriteString("  " + bar + render(StyleClaude, g) + "\n")
+		if g := groupLine(r, rowsWidth-2-barWidth); g != "" {
+			rb.WriteString("  " + bar + render(StyleClaude, g) + "\n")
 		}
 		if u.moving != nil && u.moving.rows[r.Node] {
 			// The origin of the section in hand: one placeholder, however
 			// many of its rows are showing.
 			if !placeheld {
-				b.WriteString(marker + bar + render(StyleTool, strings.Repeat("  ", r.Depth)+"⋯ 1 turn moving") + "\n")
+				rb.WriteString(marker + bar + render(StyleTool, strings.Repeat("  ", r.Depth)+"⋯ 1 turn moving") + "\n")
 			}
 			placeheld = true
 		} else {
-			text, key := renderRow(r, start+i == u.m.Cursor, u.current, u.width-2-barWidth)
-			b.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)) + render(StyleClaude, compactNote(r)) + "\n")
+			text, key := renderRow(r, start+i == u.m.Cursor, u.current, rowsWidth-2-barWidth)
+			rb.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)) + render(StyleClaude, compactNote(r)) + "\n")
 		}
 		if i == blockAfter {
-			b.WriteString("  " + rowBar(Row{}, hasCurrent) + render(StyleTool, strings.Repeat("  ", blockDepth)+"⇢ "+u.moving.head.Node.Title) + "\n")
+			rb.WriteString("  " + rowBar(Row{}, hasCurrent) + render(StyleTool, strings.Repeat("  ", blockDepth)+"⇢ "+u.moving.head.Node.Title) + "\n")
 		}
 	}
+	rowsBlock := strings.TrimSuffix(rb.String(), "\n")
+	if showSidebar {
+		n := u.currentNode()
+		var bd adapter.Breakdown
+		var tok int
+		var est bool
+		if n != nil {
+			bd, tok, est = n.SessionBreakdown, n.SessionTokens, n.TokensEstimated
+		}
+		var sb strings.Builder
+		for i, l := range sidebarLines(bd, tok, est) {
+			if i > 0 {
+				sb.WriteString("\n")
+			}
+			if i == 1 { // the "thinking" bar, the first after the header
+				sb.WriteString(render(StyleClaude, l))
+			} else {
+				sb.WriteString(render(StyleMuted, l))
+			}
+		}
+		side := sb.String()
+		h := strings.Count(rowsBlock, "\n") + 1
+		if sh := strings.Count(side, "\n") + 1; sh > h {
+			h = sh
+		}
+		sep := render(StyleTool, strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, rowsBlock, sep, side))
+	} else {
+		b.WriteString(rowsBlock)
+	}
+	b.WriteString("\n")
 	if total > 0 {
 		b.WriteString(fmt.Sprintf("\n(%d/%d)\n", u.m.Cursor+1, total))
 	} else {

@@ -48,6 +48,7 @@ Key files and functions:
 - `internal/claude/entries.go` — `Classify`, `Entries`, `SummaryPrefix` / `CompactionPrefix`, the `<pasted_content>` unwrap.
 - `internal/claude/summarise.go` — `CompactPrompt`, `Summarise` (`claude -p --resume` on a throwaway graft, timeout, stderr scrubbed).
 - `internal/claude/discover.go` — `Discover`, `ProjectsDir` (`CLAUDE_PROJECTS_DIR` overrides).
+- `internal/claude/context.go` — `contextTokens`, `turnSizes` (§3.1 per-turn growth and its fallbacks), `breakdown` (§3.2 the line's context split by type).
 - `internal/herdr/herdr.go` — `AgentState` (pane + `agent_status`), `AgentForSession`, `AgentPrompt`, `ClosePane`, `Split`, `AgentStart`, `checkArg`.
 - `internal/store/store.go` — `Load`, `Save` (merge with disk, `replaced_by` one-way), `Replace`, `Current` (skips undone versions), `CurrentOnDisk`, `Lineage`, `Group` (a move's two records), `Versions`, `SetLabel`, `AddSummary`.
 - `internal/tree/tree.go` — `Build`: hiding replaced lines, re-attaching branches through `Current`, `attachPoint`, drop/move markers along the `replaces` chain.
@@ -55,6 +56,7 @@ Key files and functions:
 - `internal/tui/edit.go` — `editConfirm`, `squashCmd`, `editCmd` (re-checks then splice), `changedElsewhere`, `busy`, `openTip` / `handoverCmd`, `placeChosen`, `foldAt`, `pickUp` / `putDown` / `carryCmd`, the summarising and review views.
 - `internal/tui/undo.go` — `undoCmd` / `redoCmd` / `toggle` (`u` / `U`; a move group together; rolled back if `Save` fails).
 - `internal/tui/model.go` — `Model`: `Rows`, folding, `Window`, ranges, `ScopeTo`, `RevealTip`.
+- `internal/tui/sidebar.go` — `sidebarLines` (§4 the context sidebar: a header line, then one bar per type).
 
 ## Hard rules
 

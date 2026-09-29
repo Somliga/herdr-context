@@ -135,6 +135,25 @@ obvious from it.
   backward compatibility for the old markers. User choice ("not used on real
   data yet"). `p` is "place a summary": git has no verb for it.
 
+## Context sizes and the sidebar
+
+- **Thinking has no bytes of its own.** A thinking block carries no
+  content-length signal usable for a share of context; it is recovered as
+  `output_tokens - visible_bytes/4` per assistant message id, summed once per
+  reply (grouped by message id, not uuid — a reply can split across more than
+  one uuid under the same id) and clamped to zero when the visible text
+  already accounts for the whole output.
+- **A turn's size is end minus the previous end**, on the folded head row
+  and the compacted group's total alike. Fallbacks, in order: no usage on the
+  turn's last entry → no size shown; the delta is at or below zero (a
+  fallen-back turn, or a turn straddling a boundary the accounting doesn't
+  see) → the whole-turn estimate instead; no usable total at all → the bytes
+  estimate, marked `~`.
+- **The sidebar tracks the current session, resolved through `Store.Current`,
+  not the row the cursor sits on.** Moving the cursor onto another session in
+  the family (to look at it, or to act on it) must not make the sidebar lie
+  about what session you are actually in.
+
 ## Live handover
 
 - **The handover happens on ⏎, not on the edit.** ⏎ on a replacement walks

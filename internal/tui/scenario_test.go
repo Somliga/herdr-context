@@ -27,6 +27,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"herdr-tree/internal/adapter"
 	"herdr-tree/internal/claude"
@@ -1296,7 +1297,9 @@ func headersFamily(t *testing.T) (uiModel, string, string) {
 }
 
 // rowLines is View's row area: every line before the blank line above the
-// counter, the cursor column dropped.
+// counter, the cursor column dropped. A sidebar, if drawn beside the rows,
+// is cut off along with the "│" separator and the padding it forces onto
+// the rows block: this helper is about the rows, not the sidebar.
 func rowLines(t *testing.T, u uiModel) (lines []string, cursor int) {
 	t.Helper()
 	cursor = -1
@@ -1310,7 +1313,11 @@ func rowLines(t *testing.T, u uiModel) (lines []string, cursor int) {
 			}
 			cursor = i
 		}
-		lines = append(lines, l[2:])
+		l = l[2:]
+		if idx := strings.Index(l, "│"); idx >= 0 {
+			l = l[:idx]
+		}
+		lines = append(lines, strings.TrimRight(l, " "))
 	}
 	return lines, cursor
 }
@@ -1365,6 +1372,10 @@ func TestTheCursorNeverSitsOnAHeader(t *testing.T) {
 func TestTheWindowFitsLinesAndKeepsTheCursorsHeader(t *testing.T) {
 	u, _, _ := headersFamily(t)
 	u.height = 9 // five lines of rows
+	// The sidebar is 7 lines tall regardless of the viewport, which is not
+	// what this test is about: a tiny window pads the rows block up to the
+	// sidebar's height, and this test cares about the rows alone.
+	u.sidebarOff = true
 	for i := range u.m.Rows() {
 		u.m.Cursor = i
 		lines, cur := rowLines(t, u)
@@ -2022,5 +2033,118 @@ func TestScenarioAMoveOntoOrFromTheClosedGroupIsRefused(t *testing.T) {
 				t.Fatal("a refused move wrote the store")
 			}
 		})
+	}
+}
+
+// sidebarContextLine is the sidebar's own "context …" text, with the tree
+// rows and the "│" separator that precede it stripped off, "" if the
+// sidebar is not shown on this View.
+func sidebarContextLine(view string) string {
+	for _, l := range strings.Split(view, "\n") {
+		if i := strings.LastIndex(l, "│"); i >= 0 && strings.Contains(l[i:], "context") {
+			return strings.TrimSpace(l[i+len("│"):])
+		}
+	}
+	return ""
+}
+
+// The sidebar (§4) shows only at a pane wide enough to hold it, and `c`
+// toggles it independently of that width check.
+func TestScenarioTheSidebarShowsAtWidth110(t *testing.T) {
+	w := newWorld(t)
+	w.trunk(sidT, "t1", "t2")
+
+	u := drive(t, w.open(sidT), tea.WindowSizeMsg{Width: 110, Height: 40})
+	v := u.View()
+	if !strings.Contains(v, "│") || !strings.Contains(v, "thinking") {
+		t.Fatalf("no sidebar at width 110:\n%s", v)
+	}
+
+	u = drive(t, w.open(sidT), tea.WindowSizeMsg{Width: 109, Height: 40})
+	v = u.View()
+	if strings.Contains(v, "│") || strings.Contains(v, "thinking") {
+		t.Fatalf("sidebar shown at width 109:\n%s", v)
+	}
+
+	u = drive(t, w.open(sidT), tea.WindowSizeMsg{Width: 110, Height: 40}, key('c'))
+	v = u.View()
+	if strings.Contains(v, "│") || strings.Contains(v, "thinking") {
+		t.Fatalf("c did not hide the sidebar:\n%s", v)
+	}
+	u = drive(t, u, key('c'))
+	v = u.View()
+	if !strings.Contains(v, "│") || !strings.Contains(v, "thinking") {
+		t.Fatalf("a second c did not bring the sidebar back:\n%s", v)
+	}
+}
+
+// The sidebar tracks the current session, not wherever the cursor happens
+// to sit (§4): moving onto another session in the family leaves it alone.
+func TestScenarioTheSidebarFollowsTheCurrentSessionNotTheCursor(t *testing.T) {
+	w := newWorld(t)
+	w.trunk(sidT, "t1", "t2")
+	b := w.branch(sidT, sidT, "t1-r")
+	w.typeInto(b, "b1")
+
+	u := drive(t, w.open(sidT), tea.WindowSizeMsg{Width: 110, Height: 40})
+	before := sidebarContextLine(u.View())
+	if before == "" {
+		t.Fatalf("no sidebar to begin with:\n%s", u.View())
+	}
+	u = cursorTo(t, u, b, "b1-p")
+	after := sidebarContextLine(u.View())
+	if before != after {
+		t.Fatalf("the sidebar followed the cursor: %q -> %q", before, after)
+	}
+}
+
+// Every line of the View fits the pane's width once the sidebar is drawn
+// beside the rows.
+func TestScenarioEveryViewLineFitsTheWidth(t *testing.T) {
+	w := newWorld(t)
+	w.trunk(sidT, "t1", "t2", "t3")
+	b := w.branch(sidT, sidT, "t1-r")
+	w.typeInto(b, "b1", "b2")
+
+	u := drive(t, allOf(w.open(sidT)), tea.WindowSizeMsg{Width: 110, Height: 40})
+	for i, l := range strings.Split(u.View(), "\n") {
+		if wd := lipgloss.Width(l); wd > 110 {
+			t.Fatalf("line %d is %d wide: %q", i, wd, l)
+		}
+	}
+}
+
+// An edited line has no reply of its own yet (§3.1), so the sidebar shows
+// the edit's estimate, marked ~, same as the header.
+func TestScenarioAnEditedLineSidebarShowsTheEstimate(t *testing.T) {
+	w := newWorld(t)
+	w.durations = true
+	w.trunk(sidT, "t1", "t2", "t3")
+	path := w.path(sidT)
+	es, _, err := claude.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []byte
+	for _, e := range es {
+		if e.UUID() == "t3-r" {
+			e.Raw["message"].(map[string]any)["usage"] = map[string]any{
+				"input_tokens": 0, "cache_read_input_tokens": 90000, "cache_creation_input_tokens": 0, "output_tokens": 5}
+		}
+		b, err := claude.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(append(out, b...), '\n')
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	u := drive(t, allOf(w.open(sidT)), tea.WindowSizeMsg{Width: 110, Height: 40})
+	u = drive(t, selectRange(t, u, sidT, "t2-p", "t2-r", 1), enter)
+	line := sidebarContextLine(u.View())
+	if !strings.HasPrefix(line, "context ~") {
+		t.Fatalf("sidebar does not show the estimate: %q", line)
 	}
 }
