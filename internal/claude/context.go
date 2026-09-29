@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bytes"
 	"encoding/json"
 
 	"herdr-tree/internal/adapter"
@@ -26,7 +27,7 @@ func outputTokens(e Entry) int {
 }
 
 // block is one content block, keeping its raw value so it can be
-// re-marshalled for a byte count exactly as it appeared on disk.
+// re-marshalled for a byte count.
 type block struct {
 	typ string
 	raw any
@@ -53,12 +54,21 @@ func contentBlocks(content any) []block {
 	return nil
 }
 
-func blockBytes(b block) float64 {
-	data, err := json.Marshal(b.raw)
-	if err != nil {
+// jsonLen is v's marshalled size without HTML escaping, so < > & count one
+// byte each as Claude Code writes them, not six as json.Marshal's \u003c.
+// Key order and spacing may still differ from the disk line.
+func jsonLen(v any) int {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
 		return 0
 	}
-	return float64(len(data))
+	return buf.Len() - 1 // Encode's trailing newline
+}
+
+func blockBytes(b block) float64 {
+	return float64(jsonLen(b.raw))
 }
 
 // turnBytes is the marshalled size of a turn's entries' message content,
@@ -70,15 +80,9 @@ func turnBytes(es []Entry) int {
 		if !ok {
 			continue
 		}
-		content, ok := msg["content"]
-		if !ok {
-			continue
+		if content, ok := msg["content"]; ok {
+			total += jsonLen(content)
 		}
-		b, err := json.Marshal(content)
-		if err != nil {
-			continue
-		}
-		total += len(b)
 	}
 	return total
 }
@@ -150,65 +154,107 @@ func turnSizes(es []Entry, nodes []adapter.Node) {
 		}
 	}
 
-	prevEnd := 0
-	prevRPos := -1 // position of the last turn's usage-bearing reply; -1 = start of file
-	prevHadReply := true
+	// ends[i] is turn i's end: its last usage-bearing reply's context plus
+	// output, and where that reply sits. The output is the largest over the
+	// reply's message.id — a streaming split entry may carry a partial count.
+	maxOut := map[string]int{}
+	for _, e := range filtered {
+		if id := messageID(e); id != "" {
+			if n := outputTokens(e); n > maxOut[id] {
+				maxOut[id] = n
+			}
+		}
+	}
+	type end struct {
+		pos, tokens int // pos -1: no usage-bearing reply
+	}
+	ends := make([]end, len(turns))
+	turnOf := make(map[string]int, len(filtered))
+	byUUID := make(map[string]Entry, len(filtered))
 	for i, t := range turns {
-		rPos, rCtx, rOut := -1, 0, 0
+		ends[i] = end{pos: -1}
 		for j := t.start; j < t.end; j++ {
 			e := filtered[j]
+			if u := e.UUID(); u != "" {
+				turnOf[u] = i
+				byUUID[u] = e
+			}
 			if e.Type() != "assistant" {
 				continue
 			}
 			if n, ok := usageTokens(e); ok && n != 0 {
-				rPos, rCtx, rOut = j, n, outputTokens(e)
+				out := outputTokens(e)
+				if m := maxOut[messageID(e)]; m > out {
+					out = m
+				}
+				ends[i] = end{pos: j, tokens: n + out}
 			}
 		}
-		hasReply := rPos >= 0
+	}
 
-		fallback := !hasReply || (i > 0 && !prevHadReply)
-		if !fallback {
-			for j := prevRPos + 1; j <= rPos; j++ {
-				if filtered[j].IsCompactBoundary() {
-					fallback = true
+	for i, t := range turns {
+		own := ends[i]
+		fallback := own.pos < 0
+		for j := t.start; !fallback && j <= own.pos; j++ {
+			fallback = filtered[j].IsCompactBoundary()
+		}
+
+		// The turn grew the line its head continues: walk the head's
+		// parentUuid chain back to the nearest entry of another turn, and
+		// on within that turn to its reply, taking that turn's end. A
+		// compact_boundary on the way invalidates it; a chain that runs out
+		// first starts from nothing.
+		base := 0
+		baseTurn := -1
+		for cur := filtered[t.start].ParentUUID(); !fallback && cur != ""; {
+			e, ok := byUUID[cur]
+			if !ok {
+				break
+			}
+			if e.IsCompactBoundary() {
+				fallback = true
+				break
+			}
+			k := turnOf[cur]
+			if k != i && baseTurn < 0 {
+				baseTurn = k
+				if ends[k].pos < 0 {
+					fallback = true // no end there to grow from
 					break
 				}
+				base = ends[k].tokens
 			}
+			if baseTurn >= 0 && (k != baseTurn || cur == filtered[ends[baseTurn].pos].UUID()) {
+				break
+			}
+			cur = e.ParentUUID()
 		}
 
 		var tokens int
 		estimated := false
 		if !fallback {
-			growth := (rCtx + rOut) - prevEnd
-			if growth <= 0 {
-				fallback = true
-			} else {
+			if growth := own.tokens - base; growth > 0 {
 				tokens = growth
+			} else {
+				fallback = true
 			}
 		}
 		if fallback {
 			tokens = turnBytes(filtered[t.start:t.end]) / 4
 			estimated = true
 		}
-
-		// prevEnd and prevRPos track the last real reply seen, whether or not
-		// ITS OWN turn's size fell back: a turn with no usage-bearing reply of
-		// its own (e.g. a squashed line's next turn, replied to before this
-		// pass ever ran) forces the NEXT turn's growth to fall back too (the
-		// prevHadReply rule above), but a turn whose reply exists and is
-		// merely sandwiched between two fallbacks must not also poison the
-		// turn after it — its own real end is still a valid baseline.
-		if hasReply {
-			prevEnd = rCtx + rOut
-			prevRPos = rPos
-		}
-		prevHadReply = hasReply
-
 		if n, ok := byID[t.headID]; ok {
 			n.TurnTokens = tokens
 			n.TurnEstimated = estimated
 		}
 	}
+}
+
+// messageID is an entry's message.id, "" if it has none.
+func messageID(e Entry) string {
+	msg, _ := e.Raw["message"].(map[string]any)
+	id, _ := msg["id"].(string)
+	return id
 }
 
 // lineKeep is the current line's kept uuids, buildLine's Select set, or,
@@ -245,9 +291,10 @@ func breakdown(es []Entry, total int) adapter.Breakdown {
 
 	var raw [6]float64 // thinking, tool calls, tool results, replies, typed, injected
 	type usage struct {
-		out     int
-		visible float64
-		set     bool
+		out      int // largest output_tokens over the id's entries
+		visible  float64
+		sigBytes int
+		hasUsage bool
 	}
 	byMsgID := map[string]*usage{}
 
@@ -274,43 +321,58 @@ func breakdown(es []Entry, total int) adapter.Breakdown {
 					info = &usage{}
 					byMsgID[id] = info
 				}
-				if !info.set {
-					info.out = outputTokens(e)
-					info.set = true
+				if _, ok := msg["usage"].(map[string]any); ok {
+					info.hasUsage = true
+				}
+				if n := outputTokens(e); n > info.out {
+					info.out = n
 				}
 			}
 			for _, b := range contentBlocks(msg["content"]) {
-				bytes := blockBytes(b)
-				switch b.typ {
-				case "thinking":
-					// no direct bytes share: counted via output_tokens below
+				if b.typ == "thinking" {
+					// no direct bytes share: counted via output_tokens below,
+					// or via its signature when the id has no usage at all
+					if info != nil {
+						sig, _ := b.raw.(map[string]any)["signature"].(string)
+						info.sigBytes += len(sig)
+					}
 					continue
+				}
+				sz := blockBytes(b)
+				switch b.typ {
 				case "tool_use":
-					raw[1] += bytes / 4
+					raw[1] += sz / 4
 				case "text":
-					raw[3] += bytes / 4
+					raw[3] += sz / 4
 				}
 				if info != nil {
-					info.visible += bytes / 4
+					info.visible += sz / 4
 				}
 			}
 		case "user":
 			for _, b := range contentBlocks(msg["content"]) {
-				bytes := blockBytes(b)
+				sz := blockBytes(b)
 				if b.typ == "tool_result" {
-					raw[2] += bytes / 4
+					raw[2] += sz / 4
 					continue
 				}
 				if k, ok := Classify(e, hasOrigin); ok && k == adapter.KindHuman {
-					raw[4] += bytes / 4
+					raw[4] += sz / 4
 				} else {
-					raw[5] += bytes / 4
+					raw[5] += sz / 4
 				}
 			}
 		}
 	}
 
 	for _, info := range byMsgID {
+		if !info.hasUsage {
+			// ponytail: a spliced line has no usage (stripUsage), so the
+			// signature stands in: 0.5 tokens per signature byte, the
+			// measured 0.4–0.6 on 2026-09-29. Upgrade: a per-model fit.
+			raw[0] += float64(info.sigBytes) * 0.5
+			continue
+		}
 		if think := float64(info.out) - info.visible; think > 0 {
 			raw[0] += think
 		}

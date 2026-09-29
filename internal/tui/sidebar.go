@@ -27,7 +27,8 @@ const (
 // runes. total and est are the line's context number and whether it is an
 // edit's estimate (tree.Node.SessionTokens / TokensEstimated); b is its
 // breakdown by type. When nothing is known — every type's tokens are zero —
-// only the header line is returned, reading "context —".
+// only the header line is returned, reading "context —". With shares but
+// total == 0, the header reads "context —" above the six bars.
 func sidebarLines(b adapter.Breakdown, total int, est bool) []string {
 	sum := 0
 	for _, t := range b.Tokens {
@@ -40,7 +41,11 @@ func sidebarLines(b adapter.Breakdown, total int, est bool) []string {
 	if est {
 		prefix = "~"
 	}
-	lines := []string{"context " + prefix + humanTokens(total)}
+	head := "context " + prefix + humanTokens(total)
+	if total == 0 {
+		head = "context —" // shares from bytes, but no number to scale them to
+	}
+	lines := []string{head}
 	for i, label := range adapter.Types {
 		share := float64(b.Tokens[i]) / float64(sum)
 		cells := int(math.Round(8 * share))

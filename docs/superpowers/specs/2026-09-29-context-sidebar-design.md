@@ -52,9 +52,13 @@ counts as injected.
 
 A turn's size is the **real growth in context** it caused. A turn's **end**
 is its last usage-bearing reply's context number (§3.1 of the meter spec:
-input + cache read + cache creation) plus that reply's `output_tokens`: what
-the context holds once the turn is done. A turn's size is its end minus the
-previous turn's end (0 before the first turn). The sizes of a line's turns
+input + cache read + cache creation) plus that reply's `output_tokens` (the
+largest over its message id's split entries): what the context holds once
+the turn is done. A turn's size is its end minus the previous turn's end (0
+before the first turn). *(Amended 2026-09-29, final review:)* the previous
+turn is the one the head continues — the nearest turn on the head's
+`parentUuid` chain — not the turn before it in the file, which after a
+rewind is the abandoned one. The sizes of a line's turns
 sum to its last turn's end.
 
 The size falls back to the turn's bytes ÷ 4, marked estimated, when:
@@ -82,7 +86,11 @@ The raw sizes are:
 - **Tool calls, tool results, replies, typed, injected:** bytes ÷ 4.
 - **Thinking:** for each reply, its `output_tokens` minus the bytes ÷ 4 of
   its visible blocks, never below 0. The split entries of one reply share
-  one usage and are counted once. A reply without usage adds no thinking.
+  one usage and are counted once; the largest `output_tokens` among them is
+  used. *(Amended 2026-09-29, final review:)* a reply with no usage on any
+  of its entries — every reply after an edit, since a splice strips usage —
+  takes its thinking as its thinking blocks' signature bytes × 0.5 (the
+  measured 0.4–0.6 tokens per signature byte).
 
 The six raw sizes are then scaled so they sum to the line's context number.
 When the line has only an estimate (`~`) or no number, the sizes are shown
@@ -120,7 +128,8 @@ injected     ▯▯▯▯▯▯▯▯  3%
 
   The bar has 8 cells, rounded. With an estimate the first line reads
   `context ~31k`. With no number and no bytes it reads `context —` and no
-  types.
+  types. *(Amended 2026-09-29, final review:)* with bytes but no number it
+  reads `context —` above the six bars.
 - It is separated from the tree by a muted `│` column. Rendering stays plain
   text so it can be asserted; colours follow the palette: the bar in the
   tree's muted grey, and `thinking` in Claude's terracotta, since it is the

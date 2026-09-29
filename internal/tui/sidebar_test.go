@@ -38,3 +38,13 @@ func TestSidebarWithAnEstimateAndWithNothing(t *testing.T) {
 		t.Fatalf("nothing known: %q", got)
 	}
 }
+
+// Bytes known but no context number: the header says "—", not "<1k", and
+// the six bars still show the byte shares.
+func TestSidebarWithSharesButNoTotal(t *testing.T) {
+	b := adapter.Breakdown{Tokens: [6]int{0, 100, 300, 0, 0, 0}, Estimated: true}
+	got := sidebarLines(b, 0, false)
+	if got[0] != "context —" || len(got) != 7 {
+		t.Fatalf("got %q, want \"context —\" and six bars", got)
+	}
+}
