@@ -150,7 +150,7 @@ func Splice(srcPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, err
 	if e.After != "" {
 		t, ok := l.turn[e.After]
 		if !ok {
-			return adapter.Spliced{}, ErrNotOnLine
+			return adapter.Spliced{}, l.notOn(e.After)
 		}
 		if e.Seed == "" {
 			return adapter.Spliced{}, errors.New("an insert needs something to insert")
@@ -279,8 +279,10 @@ func move(dstPath string, e adapter.Edit, dstCWD string) (adapter.Spliced, error
 	mt, okFrom := from.turn[e.From] // the moved turn
 	at, okAt := l.turn[e.After]
 	switch {
-	case !okFrom || !okAt:
-		return adapter.Spliced{}, ErrNotOnLine
+	case !okFrom:
+		return adapter.Spliced{}, from.notOn(e.From)
+	case !okAt:
+		return adapter.Spliced{}, l.notOn(e.After)
 	case mt == 0:
 		return adapter.Spliced{}, ErrMovePreamble
 	case same && (at == mt || at == mt-1):

@@ -12,6 +12,43 @@ import (
 // so editing it would change nothing the agent reads.
 var ErrNotOnLine = errors.New("that entry is not on this session's current line")
 
+// errBeforeCompact is ErrNotOnLine for an entry the line's native /compact
+// already summarised: it is in the file but not in the context.
+type errBeforeCompact struct{}
+
+func (errBeforeCompact) Error() string {
+	return "that turn is before a /compact — already summarised by Claude Code, not in the context"
+}
+func (errBeforeCompact) Is(target error) bool { return target == ErrNotOnLine }
+
+// notOn is why u is not on the line: in the file before the /compact the
+// line restarts at (the chain's root is then its compact_boundary), or simply
+// on another stretch.
+func (l *line) notOn(u string) error {
+	if len(l.chain) == 0 {
+		return ErrNotOnLine
+	}
+	root := l.chain[0]
+	compacted := false
+	for _, e := range l.es {
+		if e.UUID() == root {
+			compacted = e.IsCompactBoundary()
+		}
+	}
+	if !compacted {
+		return ErrNotOnLine
+	}
+	for _, e := range l.es {
+		switch e.UUID() {
+		case root:
+			return ErrNotOnLine // u, if anywhere, comes after the line's start
+		case u:
+			return errBeforeCompact{}
+		}
+	}
+	return ErrNotOnLine
+}
+
 // line is a transcript's current line — what the agent reads on resume —
 // divided into turns. A turn runs from something the user typed (or an entry
 // we injected) up to, not including, the next one. Turn 0 is the preamble:
@@ -235,8 +272,11 @@ func buildLineAt(es []Entry, tip string) (*line, error) {
 func (l *line) span(from, to string) (first, last int, err error) {
 	a, okA := l.turn[from]
 	b, okB := l.turn[to]
-	if !okA || !okB {
-		return 0, 0, ErrNotOnLine
+	if !okA {
+		return 0, 0, l.notOn(from)
+	}
+	if !okB {
+		return 0, 0, l.notOn(to)
 	}
 	if a > b {
 		a, b = b, a

@@ -190,7 +190,11 @@ func Classify(e Entry, hasOrigin bool) (adapter.Kind, bool) {
 func Entries(es []Entry) []adapter.Node {
 	hasOrigin := HasHumanOrigin(es)
 	var out []adapter.Node
+	compacted := false
 	for _, e := range es {
+		if e.IsCompactBoundary() && !e.IsSidechain() {
+			compacted = true
+		}
 		k, keep := Classify(e, hasOrigin)
 		if !keep {
 			continue
@@ -203,7 +207,8 @@ func Entries(es []Entry) []adapter.Node {
 		if k == adapter.KindToolCall {
 			title = toolLabel(e)
 		}
-		out = append(out, adapter.Node{ID: e.UUID(), Title: title, Kind: k, At: e.Timestamp()})
+		out = append(out, adapter.Node{ID: e.UUID(), Title: title, Kind: k, At: e.Timestamp(), AfterCompact: compacted})
+		compacted = false
 	}
 	return out
 }

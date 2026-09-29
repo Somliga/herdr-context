@@ -224,6 +224,24 @@ func cutNote(n *tree.Node) string {
 	return out
 }
 
+// compactNote marks where a native /compact restarted the line: turns above
+// it are already summarised by Claude Code and cannot be edited. A folded
+// head carries its body's mark, since an autocompact lands mid-turn.
+func compactNote(r Row) string {
+	const note = "   ⋮ compacted by Claude Code — context starts here"
+	if r.Node.Node.AfterCompact {
+		return note
+	}
+	if r.Folded {
+		for _, c := range r.Node.Children {
+			if c.SessionID == r.Node.SessionID && !c.IsHead && c.Node.AfterCompact {
+				return note
+			}
+		}
+	}
+	return ""
+}
+
 // confirmText is the branch confirmation, which is where the user is told
 // exactly what a graft copies and where it will open.
 func confirmText(n *tree.Node, turns, entries int, size int64, dstCWD string) string {
@@ -1111,7 +1129,7 @@ func (u uiModel) View() string {
 			placeheld = true
 		} else {
 			text, key := renderRow(r, start+i == u.m.Cursor, u.current, u.width-2-barWidth)
-			b.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)) + "\n")
+			b.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)+compactNote(r)) + "\n")
 		}
 		if i == blockAfter {
 			b.WriteString("  " + rowBar(Row{}, hasCurrent) + render(StyleTool, strings.Repeat("  ", blockDepth)+"⇢ "+u.moving.head.Node.Title) + "\n")

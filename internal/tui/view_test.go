@@ -1485,3 +1485,17 @@ func TestViewMutesTheCutMarker(t *testing.T) {
 		t.Fatalf("View output does not mute the cut marker as StyleTool:\ngot:  %q\nwant substring: %q", got, want)
 	}
 }
+
+func TestCompactNoteMarksWhereTheContextStarts(t *testing.T) {
+	body := &tree.Node{SessionID: "S", Node: adapter.Node{ID: "a", AfterCompact: true}}
+	head := &tree.Node{SessionID: "S", IsHead: true, Node: adapter.Node{ID: "p"}, Children: []*tree.Node{body}}
+	if compactNote(Row{Node: body}) == "" {
+		t.Error("the first node after a compact is not marked")
+	}
+	if compactNote(Row{Node: head, Folded: true}) == "" {
+		t.Error("a folded head hides its body's compact mark")
+	}
+	if compactNote(Row{Node: head}) != "" {
+		t.Error("an unfolded head repeats the mark its body row shows")
+	}
+}

@@ -39,6 +39,12 @@ func (e Entry) IsSidechain() bool {
 	return b
 }
 
+// IsCompactBoundary is the entry a native /compact (or autocompact) writes
+// where the parent chain restarts.
+func (e Entry) IsCompactBoundary() bool {
+	return e.Type() == "system" && e.str("subtype") == "compact_boundary"
+}
+
 // IsCompactSummary marks the summary a native /compact writes after its
 // boundary. It is user-typed on disk but no one typed it.
 func (e Entry) IsCompactSummary() bool {

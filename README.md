@@ -72,6 +72,10 @@ in progress it changes to say so.
     used to be.
   - `⇠ moved from <id>` (muted) — the moved turn in its new line. A move
     within one line is a reorder and leaves no marker.
+  - `⋮ compacted by Claude Code — context starts here` (muted) — a native
+    `/compact` or autocompact. Turns above it are already Claude Code's
+    summary: not in the context, and they cannot be squashed, dropped or
+    moved (a branch from them still works).
   - `● current` — the tip of the session you are in.
 
 ## Squash

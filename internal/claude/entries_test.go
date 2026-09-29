@@ -334,3 +334,21 @@ func TestEntriesTitlesAPastedSummaryByItsArrowLine(t *testing.T) {
 		t.Fatalf("kind = %v, want KindSummaryImport", got[0].Kind)
 	}
 }
+
+// The first node after a native /compact carries AfterCompact, so the tree
+// can mark where the line's context starts; no other node does.
+func TestEntriesMarksTheFirstNodeAfterACompact(t *testing.T) {
+	es, _, err := ParseFile("testdata/compacted.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var marked []string
+	for _, n := range Entries(es) {
+		if n.AfterCompact {
+			marked = append(marked, n.ID)
+		}
+	}
+	if len(marked) != 1 || marked[0] != "u3" {
+		t.Fatalf("marked %v, want [u3]", marked)
+	}
+}

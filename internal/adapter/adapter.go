@@ -37,6 +37,9 @@ type Node struct {
 	Title string // single-line label, already truncated
 	Kind  Kind
 	At    time.Time
+	// AfterCompact marks the first node after a native /compact: the line's
+	// context starts here, everything before it is Claude Code's summary.
+	AfterCompact bool
 }
 
 // Session is one agent session: a linear path of turns.

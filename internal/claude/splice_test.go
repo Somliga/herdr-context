@@ -712,3 +712,15 @@ func TestWidenBranchReachesARewoundStretch(t *testing.T) {
 		t.Fatalf("WidenBranch(x1) = %+v, %v; want it to end at xa1", sp, err)
 	}
 }
+
+// A range before a native /compact says why it cannot be edited: Claude Code
+// already summarised it. It is still ErrNotOnLine for callers that ask.
+func TestARangeBeforeANativeCompactSaysSo(t *testing.T) {
+	_, err := Widen(compacted, "u1", "u1")
+	if !errors.Is(err, ErrNotOnLine) || !strings.Contains(err.Error(), "before a /compact") {
+		t.Fatalf("err %v, want the before-a-/compact refusal", err)
+	}
+	if _, err := Widen(compacted, "u3", "u3"); err != nil {
+		t.Fatalf("a turn after the compact: %v", err)
+	}
+}

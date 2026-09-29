@@ -300,7 +300,7 @@ func screen(u uiModel) []string {
 		if h := headerLine(r, 0); h != "" {
 			line = h + "\n" + line
 		}
-		out = append(out, line+cutNote(r.Node))
+		out = append(out, line+cutNote(r.Node)+compactNote(r))
 	}
 	return out
 }
@@ -1701,11 +1701,14 @@ func TestScenarioAnEditBeforeANativeCompactIsStillRefused(t *testing.T) {
 	u = drive(t, u, key('s'))
 	u = cursorTo(t, u, sidT, "u1")
 	u = drive(t, u, enter, enter) // the range menu, squash
-	if u.confirm != "" || !strings.Contains(u.status, "not on this session's current line") {
+	if u.confirm != "" || !strings.Contains(u.status, "before a /compact — already summarised by Claude Code") {
 		t.Fatalf("squash before the boundary: confirm %q, status %q", u.confirm, u.status)
 	}
 	if w.summaries() != 0 {
 		t.Fatal("a refused squash was paid for")
+	}
+	if !strings.Contains(shown(allOf(w.open(sidT))), "compacted by Claude Code — context starts here") {
+		t.Errorf("the tree does not mark where the context starts:\n%s", shown(allOf(w.open(sidT))))
 	}
 }
 

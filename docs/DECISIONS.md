@@ -67,6 +67,11 @@ obvious from it.
   undone replacements. A move's two records share an `edit` id and toggle
   together; refused if either line was edited since. Redo is refused if a
   partner line has moved on.
+- **A native /compact is marked, and edits before it say why they are
+  refused.** The first node after a `compact_boundary` carries `AfterCompact`
+  (a folded head shows its body's mark: autocompact lands mid-turn). A range
+  before it is `ErrNotOnLine` with its own message. Why: the tree showed those
+  turns like any other, and squashing them failed with a generic error.
 - **The context number is the last reply's usage on the current line**
   (input + cache read + cache creation), counted once per reply, skipping
   all-zero synthetic replies. `Splice` strips `usage` from what it writes; the
