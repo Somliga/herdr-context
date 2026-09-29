@@ -205,7 +205,7 @@ func TestUndoIsRefusedWhileAnyVersionIsBusy(t *testing.T) {
 	before := w.storeFile()
 
 	u = drive(t, u, key('u'))
-	if want := "agent is working — wait for it to finish"; u.status != want {
+	if want := shortID(sidT) + " is open in pane pane-T and herdr says its agent is working — nothing was written; try again when its turn ends"; u.status != want {
 		t.Fatalf("status %q, want %q", u.status, want)
 	}
 	if w.storeFile() != before {

@@ -259,7 +259,7 @@ func TestAFailedDropAfterAGoodInsertKeepsTheCopy(t *testing.T) {
 	if st, _ := store.Load(w.repo); st.Current(sidT) != sidT {
 		t.Fatal("the source was dropped by its busy agent")
 	}
-	want := "moved into " + shortID(sidU) + ", but the source was not dropped: agent is working — wait for it to finish; nothing was written"
+	want := "moved into " + shortID(sidU) + ", but the source was not dropped: " + shortID(sidT) + " is open in pane pane-T and herdr says its agent is working — nothing was written; try again when its turn ends"
 	if u.status != want {
 		t.Fatalf("status %q, want %q", u.status, want)
 	}
@@ -279,8 +279,8 @@ func TestAMoveIsRefusedOnABusyOrChangedLine(t *testing.T) {
 		busy, changed string
 		want          string
 	}{
-		"busy source":    {busy: sidT, want: "the source's agent is working — wait for it to finish; nothing was written"},
-		"busy target":    {busy: sidU, want: "agent is working — wait for it to finish; nothing was written"},
+		"busy source":    {busy: sidT, want: "the source: " + shortID(sidT) + " is open in pane pane and herdr says its agent is working — nothing was written; try again when its turn ends"},
+		"busy target":    {busy: sidU, want: shortID(sidU) + " is open in pane pane and herdr says its agent is working — nothing was written; try again when its turn ends"},
 		"changed source": {changed: sidT, want: staleLine},
 		"changed target": {changed: sidU, want: staleLine},
 	} {

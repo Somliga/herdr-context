@@ -541,7 +541,7 @@ func TestEnterOnAReplacementWhenHerdrWillNotSayIsRefused(t *testing.T) {
 func TestABlockedAgentRefusesAnEdit(t *testing.T) {
 	fa := &fakeAdapter{span: adapter.Span{First: 2, Last: 3}}
 	u, cmd := press(t, rangeUI(t, fa, &herdrLog{status: []string{"blocked"}}), enter, down, enter)
-	if cmd != nil || u.confirm != "" || u.status != "agent is blocked — wait for it to finish" {
+	if cmd != nil || u.confirm != "" || u.status != "s is open in pane pane-1 and herdr says its agent is blocked — nothing was written; try again when its turn ends" {
 		t.Fatalf("status %q confirm %q", u.status, u.confirm)
 	}
 }
@@ -549,7 +549,7 @@ func TestABlockedAgentRefusesAnEdit(t *testing.T) {
 func TestABlockedOldAgentRefusesTheHandover(t *testing.T) {
 	fa := &fakeAdapter{}
 	u, cmd := press(t, replacedUI(t, fa, &herdrLog{status: []string{"", "blocked"}}), enter)
-	if cmd != nil || u.confirm != "" || u.status != "the old line's agent is blocked — wait for it to finish" {
+	if cmd != nil || u.confirm != "" || u.status != "the old line: s is open in pane pane-1 and herdr says its agent is blocked — nothing was written; try again when its turn ends" {
 		t.Fatalf("status %q confirm %q", u.status, u.confirm)
 	}
 }

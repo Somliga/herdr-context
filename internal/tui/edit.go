@@ -321,7 +321,7 @@ func editCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) tea.C
 			// The summary call takes minutes, and a pane may have opened on
 			// the session meanwhile. Whatever was true at confirm time is
 			// checked again right before the transcript is read.
-			_, status, err := live(op.src.ID)
+			pane, status, err := live(op.src.ID)
 			if err != nil {
 				if op.summarise {
 					return actionDoneMsg{status: "summary stored — cannot tell whether the session is busy: " + scrubbed(err, op.edit.Seed) + "; nothing was spliced"}
@@ -332,7 +332,7 @@ func editCmd(a adapter.Adapter, st *store.Store, op editOp, live LiveFunc) tea.C
 				if op.summarise {
 					return actionDoneMsg{status: "summary stored — agent is " + status + "; select again or use p"}
 				}
-				return actionDoneMsg{status: "agent is " + status + " — wait for it to finish; nothing was written"}
+				return actionDoneMsg{status: busyStatus("", op.src.ID, pane, status)}
 			}
 		}
 		if op.summarise {
@@ -429,7 +429,7 @@ func (u uiModel) openTip(n *tree.Node) (tea.Model, tea.Cmd) {
 				continue
 			}
 			if busy(status) {
-				u.status = "the old line's agent is " + status + " — wait for it to finish"
+				u.status = busyStatus("the old line: ", old, pane, status)
 				return u, nil
 			}
 			u.confirm = fmt.Sprintf("Check out the new line:  %q\n\nThe pane running the old line is closed; text typed but not sent there is lost.\n\n[enter] continue   [esc] back", n.Node.Title)
@@ -495,6 +495,18 @@ func (u uiModel) editConfirm(kind string) (tea.Model, tea.Cmd) {
 	return u, nil
 }
 
+// busyStatus is the one refusal for an agent mid-turn: which session, which
+// pane, what herdr said, and that nothing was written. who prefixes it when
+// the session is not the one under the cursor ("the source: ").
+func busyStatus(who, sid, pane, status string) string {
+	where := ""
+	if pane != "" {
+		where = " in pane " + pane
+	}
+	return who + shortID(sid) + " is open" + where + " and herdr says its agent is " + status +
+		" — nothing was written; try again when its turn ends"
+}
+
 // liveCheck reports whether sessionID may be edited. false means the edit is
 // refused and u.status says why: a busy agent, or a herdr that will not say —
 // an edit must know whether a turn is running under it, not guess.
@@ -502,13 +514,13 @@ func (u *uiModel) liveCheck(sessionID string) bool {
 	if u.live == nil {
 		return true
 	}
-	_, status, err := u.live(sessionID)
+	pane, status, err := u.live(sessionID)
 	if err != nil {
 		u.status = "cannot tell whether this session is open: " + err.Error()
 		return false
 	}
 	if busy(status) {
-		u.status = "agent is " + status + " — wait for it to finish"
+		u.status = busyStatus("", sessionID, pane, status)
 		return false
 	}
 	return true
@@ -707,12 +719,12 @@ func carryCmd(a adapter.Adapter, st *store.Store, ins, drop editOp, live LiveFun
 			return actionDoneMsg{status: stale}
 		}
 		if live != nil {
-			_, status, err := live(drop.src.ID)
+			pane, status, err := live(drop.src.ID)
 			if err != nil {
 				return actionDoneMsg{status: "cannot tell whether the source is busy: " + err.Error() + " — nothing was written"}
 			}
 			if busy(status) {
-				return actionDoneMsg{status: "the source's agent is " + status + " — wait for it to finish; nothing was written"}
+				return actionDoneMsg{status: busyStatus("the source: ", drop.src.ID, pane, status)}
 			}
 		}
 		msg := editCmd(a, st, ins, live)().(actionDoneMsg)

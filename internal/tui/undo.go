@@ -77,12 +77,12 @@ func toggle(st *store.Store, group []string, undo bool, live LiveFunc, word, tip
 			continue
 		}
 		for _, v := range st.Lineage(expect) {
-			_, status, err := live(v)
+			pane, status, err := live(v)
 			if err != nil {
 				return actionDoneMsg{status: "cannot tell whether this session is open: " + err.Error() + " — nothing was written"}
 			}
 			if busy(status) {
-				return actionDoneMsg{status: "agent is " + status + " — wait for it to finish"}
+				return actionDoneMsg{status: busyStatus("", v, pane, status)}
 			}
 		}
 	}
