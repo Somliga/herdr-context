@@ -178,7 +178,6 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 	return line, key
 }
 
-// fit truncates line to width columns, "…" last; width 0 is unlimited.
 // padCells pads s with spaces to width display cells (ANSI codes not
 // counted).
 func padCells(s string, width int) string {
@@ -188,6 +187,7 @@ func padCells(s string, width int) string {
 	return s
 }
 
+// fit truncates line to width columns, "…" last; width 0 is unlimited.
 func fit(line string, width int) string {
 	if width > 0 && len([]rune(line)) > width {
 		return string([]rune(line)[:width-1]) + "…"
