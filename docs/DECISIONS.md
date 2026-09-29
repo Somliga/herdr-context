@@ -72,6 +72,11 @@ obvious from it.
   (a folded head shows its body's mark: autocompact lands mid-turn). A range
   before it is `ErrNotOnLine` with its own message. Why: the tree showed those
   turns like any other, and squashing them failed with a generic error.
+- **The compacted stretch is one folded row, anchored on its first shown
+  turn** (no synthetic node), so each node has one row and ⏎/`b`/`s` act on a
+  real turn. Open state survives in-overlay rebuilds; the overlay opens with
+  every group closed. Cost: none known; `m` onto a closed group row is
+  untested (the edit refuses as before).
 - **The context number is the last reply's usage on the current line**
   (input + cache read + cache creation), counted once per reply, skipping
   all-zero synthetic replies. `Splice` strips `usage` from what it writes; the
