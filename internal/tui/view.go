@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"herdr-tree/internal/adapter"
 	"herdr-tree/internal/store"
@@ -178,6 +179,15 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 }
 
 // fit truncates line to width columns, "…" last; width 0 is unlimited.
+// padCells pads s with spaces to width display cells (ANSI codes not
+// counted).
+func padCells(s string, width int) string {
+	if n := ansi.StringWidth(s); n < width {
+		return s + strings.Repeat(" ", width-n)
+	}
+	return s
+}
+
 func fit(line string, width int) string {
 	if width > 0 && len([]rune(line)) > width {
 		return string([]rune(line)[:width-1]) + "…"
@@ -1239,13 +1249,18 @@ func (u uiModel) View() string {
 	}
 	rowsBlock := strings.TrimSuffix(rb.String(), "\n")
 	if showSidebar {
-		// Pad every line to exactly rowsWidth display columns (ANSI colour
-		// codes do not count) so the "│" separator sits at a fixed column —
-		// u.width-sidebarWidth-1, flush with the pane's right edge —
-		// regardless of which row happens to be widest on screen. Without
-		// this, JoinHorizontal pads only to the widest VISIBLE row, and the
-		// sidebar drifts sideways on every fold or scroll.
-		rowsBlock = lipgloss.NewStyle().Width(rowsWidth).Render(rowsBlock)
+		// Cut and pad every line to exactly rowsWidth display cells (ANSI
+		// colour codes do not count) so the "│" separator sits at a fixed
+		// column — u.width-sidebarWidth-1, flush with the pane's right edge
+		// — regardless of which row is widest on screen. Cut, never wrap: a
+		// wrapped line would push the counter and footer off screen, and
+		// notes appended after fit (and CJK titles, which fit counts in
+		// runes, not cells) can overflow.
+		lines := strings.Split(rowsBlock, "\n")
+		for i, l := range lines {
+			lines[i] = padCells(ansi.Truncate(l, rowsWidth, "…"), rowsWidth)
+		}
+		rowsBlock = strings.Join(lines, "\n")
 		n := u.currentNode()
 		var bd adapter.Breakdown
 		var tok int
@@ -1258,6 +1273,7 @@ func (u uiModel) View() string {
 			if i > 0 {
 				sb.WriteString("\n")
 			}
+			l = padCells(l, sidebarWidth)
 			if i == 1 { // the "thinking" bar, the first after the header
 				sb.WriteString(render(StyleClaude, l))
 			} else {

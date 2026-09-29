@@ -1870,12 +1870,18 @@ func TestScenarioFoldedTurnsShowTheirSizes(t *testing.T) {
 
 	u := w.open(sidT)
 	rows := asShown(u)
+	// ends 5005, 40005, 90005: growths 5005, 35000, 50000.
+	want := []string{"  5k", "  35k", "  50k"}
+	var turns []string
 	for _, l := range rows {
-		if strings.HasPrefix(l, shortID(sidT)) {
-			continue // the session header, not a turn row
-		}
-		if !strings.Contains(l, "k") {
-			t.Fatalf("a folded turn row has no size: %q\nall:\n%s", l, strings.Join(rows, "\n"))
+		turns = append(turns, l[strings.LastIndex(l, "\n")+1:]) // past the session header
+	}
+	if len(turns) != len(want) {
+		t.Fatalf("%d turn rows, want %d:\n%s", len(turns), len(want), strings.Join(rows, "\n"))
+	}
+	for i, l := range turns {
+		if !strings.HasSuffix(l, want[i]) || strings.HasSuffix(l, "~"+want[i][2:]) {
+			t.Fatalf("turn %d row %q, want it to end in %q real\nall:\n%s", i+1, l, want[i], strings.Join(rows, "\n"))
 		}
 	}
 }
@@ -2194,6 +2200,11 @@ func TestScenarioEveryViewLineFitsTheWidth(t *testing.T) {
 			t.Fatalf("line %d is %d wide: %q", i, wd, l)
 		}
 	}
+	off := u
+	off.sidebarOff = true
+	if got, want := len(strings.Split(u.View(), "\n")), len(strings.Split(off.View(), "\n")); got != want {
+		t.Fatalf("%d lines beside the sidebar, %d without: a line wrapped or the sidebar padded the rows", got, want)
+	}
 }
 
 // An edited line has no reply of its own yet (§3.1), so the sidebar shows
@@ -2228,5 +2239,53 @@ func TestScenarioAnEditedLineSidebarShowsTheEstimate(t *testing.T) {
 	line := sidebarContextLine(u.View())
 	if !strings.HasPrefix(line, "context ~") {
 		t.Fatalf("sidebar does not show the estimate: %q", line)
+	}
+}
+
+// Under the sidebar no rows-block line may wrap: a long title plus a ✂ note,
+// and a 60-rune CJK title (120 cells, though fit counts 60), are cut to the
+// rows width, so the View has exactly as many lines as without the sidebar,
+// every line fits, and the │ is at the fixed column on every row line.
+func TestScenarioOverlongRowsAreCutNotWrappedBesideTheSidebar(t *testing.T) {
+	w := newWorld(t)
+	long := "LONG" + strings.Repeat("x", 76)
+	cjk := strings.Repeat("漢", 60)
+	w.trunk(sidT, "t1", long, cjk, "t4", "t5", "t6", "t7", "t8")
+	u := allOf(w.open(sidT))
+	u = drive(t, selectRange(t, u, sidT, "t1-p", "t1-r", 1), enter)
+	u = drive(t, u, tea.WindowSizeMsg{Width: 110, Height: 40})
+	if got := rowText(u, w.replacement(sidT), long+"-p"); !strings.Contains(got, "✂") {
+		t.Fatalf("no ✂ note on the long row: %q", got)
+	}
+
+	v := u.View()
+	off := u
+	off.sidebarOff = true
+	if got, want := len(strings.Split(v, "\n")), len(strings.Split(off.View(), "\n")); got != want {
+		t.Fatalf("%d lines beside the sidebar, %d without: a row wrapped\n%s", got, want, v)
+	}
+	want := 110 - sidebarWidth - 1
+	rows := 0
+	for i, l := range strings.Split(v, "\n") {
+		if wd := lipgloss.Width(l); wd > 110 {
+			t.Fatalf("line %d is %d wide: %q", i, wd, l)
+		}
+		if l == "" {
+			break
+		}
+		j := strings.IndexRune(l, '│')
+		if j < 0 {
+			t.Fatalf("row line %d has no │: %q", i, l)
+		}
+		if c := lipgloss.Width(l[:j]); c != want {
+			t.Fatalf("row line %d: │ at column %d, want %d: %q", i, c, want, l)
+		}
+		if wd := lipgloss.Width(l); wd != 110 {
+			t.Fatalf("row line %d is %d wide, want flush at 110: %q", i, wd, l)
+		}
+		rows++
+	}
+	if rows < sidebarRows {
+		t.Fatalf("only %d row lines", rows)
 	}
 }

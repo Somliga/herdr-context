@@ -137,18 +137,32 @@ obvious from it.
 
 ## Context sizes and the sidebar
 
-- **Thinking has no bytes of its own.** A thinking block carries no
-  content-length signal usable for a share of context; it is recovered as
-  `output_tokens - visible_bytes/4` per assistant message id, summed once per
-  reply (grouped by message id, not uuid — a reply can split across more than
-  one uuid under the same id) and clamped to zero when the visible text
-  already accounts for the whole output.
-- **A turn's size is end minus the previous end**, on the folded head row
-  and the compacted group's total alike. Fallbacks, in order: no usage on the
-  turn's last entry → no size shown; the delta is at or below zero (a
-  fallen-back turn, or a turn straddling a boundary the accounting doesn't
-  see) → the whole-turn estimate instead; no usable total at all → the bytes
-  estimate, marked `~`.
+- **Thinking has no bytes of its own.** A thinking block's bytes are
+  almost all signature; its share is recovered as `output_tokens -
+  visible_bytes/4` per assistant message id (grouped by id, not uuid — a
+  reply splits across uuids under one id; the largest `output_tokens` among
+  them is used, as a streaming entry may carry a partial count), clamped at
+  zero.
+- **The clamp is one-sided.** A reply whose visible bytes/4 overshoot its
+  output counts 0 thinking, never negative, so thinking is biased slightly
+  high across a line. Cost: a few percent; cheaper than a signed model.
+- **No usage, signature × 0.5.** A splice strips usage, so every reply after
+  an edit has none; its thinking is its signature bytes × 0.5 (measured
+  0.4–0.6 tokens per signature byte, 2026-09-29). Cost if wrong: thinking's
+  bar off by that ratio on edited lines; upgrade to a per-model fit.
+- **No system-prompt bucket.** The baseline (system prompt, tools) has no
+  entry of its own: scaled to the line's number it is spread across the six
+  types, and it sits in the first turn's size.
+- **A turn's size is end minus the previous end.** End is the turn's last
+  usage-bearing reply's context plus its output. The previous end is the
+  turn the head continues on its `parentUuid` chain, not the file
+  predecessor (after a rewind, that is the abandoned turn). Sizes sum to the
+  header number plus the last reply's output. Fallback to bytes ÷ 4, marked
+  `~`: this turn or the one it continues has no usage-bearing reply; the
+  growth is ≤ 0; or a `compact_boundary` lies on the way (in the turn before
+  its reply, or on the head's chain back).
+- **Byte counts are the marshalled JSON without HTML escaping**, so `< > &`
+  count one byte each; key order and spacing may still differ from disk.
 - **The sidebar tracks the current session, resolved through `Store.Current`,
   not the row the cursor sits on.** Moving the cursor onto another session in
   the family (to look at it, or to act on it) must not make the sidebar lie

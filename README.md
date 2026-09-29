@@ -47,7 +47,7 @@ go build -o bin/herdr-tree.exe ./cmd/herdr-tree
 | L | Label this turn (empty clears) |
 | a | Scope: this session's family ↔ all sessions |
 | f | Filter: all entries ↔ only what a person typed |
-| c | Show / hide the context sidebar (panes 110+ columns wide) |
+| c | Hide / show the context sidebar (on by default; panes 110+ columns wide) |
 | esc | Cancel the range, move or dialog in progress; otherwise close (`q` also closes) |
 
 The footer always shows what the keys do right now; while a range or a move is
@@ -84,9 +84,10 @@ in progress it changes to say so.
     is closed it is the divider, and the note above is not repeated.
   - `● current` — the tip of the session you are in.
 - **Turn sizes.** A folded head row's turn count is followed by its context
-  size (`(2)  ~1k`); an open compacted group's heading shows the same, for
-  the whole group.
-- **The context sidebar.** At 110+ columns, `c` shows a right-hand column for
+  size (`(2)  ~1k`), and an open turn's prompt row shows the same; an open
+  compacted group's heading shows it for the whole group.
+- **The context sidebar.** At 110+ columns a right-hand column, on by
+  default (`c` hides and shows it), for
   the session you are in — not wherever the cursor sits: the line's context
   number, then a bar per type (thinking, tool calls, tool results, replies,
   typed, injected). Hidden in every full-screen view (confirm, review,
