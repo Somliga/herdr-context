@@ -179,13 +179,11 @@ func turnSizes(es []Entry, nodes []adapter.Node) {
 		var tokens int
 		estimated := false
 		if !fallback {
-			end := rCtx + rOut
-			growth := end - prevEnd
+			growth := (rCtx + rOut) - prevEnd
 			if growth <= 0 {
 				fallback = true
 			} else {
 				tokens = growth
-				prevEnd = end
 			}
 		}
 		if fallback {
@@ -193,7 +191,15 @@ func turnSizes(es []Entry, nodes []adapter.Node) {
 			estimated = true
 		}
 
+		// prevEnd and prevRPos track the last real reply seen, whether or not
+		// ITS OWN turn's size fell back: a turn with no usage-bearing reply of
+		// its own (e.g. a squashed line's next turn, replied to before this
+		// pass ever ran) forces the NEXT turn's growth to fall back too (the
+		// prevHadReply rule above), but a turn whose reply exists and is
+		// merely sandwiched between two fallbacks must not also poison the
+		// turn after it — its own real end is still a valid baseline.
 		if hasReply {
+			prevEnd = rCtx + rOut
 			prevRPos = rPos
 		}
 		prevHadReply = hasReply
@@ -313,6 +319,11 @@ func breakdown(es []Entry, total int) adapter.Breakdown {
 	var tokens [6]int
 	if total > 0 {
 		sum := raw[0] + raw[1] + raw[2] + raw[3] + raw[4] + raw[5]
+		// ponytail: sum == 0 with total > 0 means a line with a context
+		// number but no classifiable content at all, which no real Claude
+		// Code transcript produces (every entry marshals to at least a few
+		// bytes). Left as six zeros rather than an untested distribution
+		// rule; revisit if a real transcript ever hits this.
 		if sum > 0 {
 			assigned := 0
 			largest := 0

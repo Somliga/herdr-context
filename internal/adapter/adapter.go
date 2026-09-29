@@ -41,7 +41,9 @@ type Node struct {
 	// context starts here, everything before it is Claude Code's summary.
 	AfterCompact bool
 	// TurnTokens is a head node's turn size (§3.1 of the sidebar spec), 0 on
-	// other nodes; TurnEstimated marks the bytes fallback.
+	// other nodes; TurnEstimated marks the bytes fallback. Set for every
+	// turn in the transcript, not only the current line — a rewound
+	// stretch or a turn before a native /compact carries a size too.
 	TurnTokens    int
 	TurnEstimated bool
 }

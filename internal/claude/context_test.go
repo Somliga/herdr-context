@@ -283,6 +283,49 @@ func rewound(t *testing.T) []Entry {
 	return lines(t, l1, l2, l3, l4)
 }
 
+// fourTurnsWithAGapInB is four turns, each a prompt then a reply: A's reply
+// has real usage (end 1000); B's reply has no usage at all (an edited or
+// synthetic reply); C's reply has real usage (end 2100) but must still fall
+// back, because B lacks one; D's reply has real usage (end 2600). D's own
+// growth (2600-2100=500) must be computed from C's real end, not from A's —
+// C falling back must not erase the real end its own reply reached.
+func fourTurnsWithAGapInB(t *testing.T) []Entry {
+	human := func(uuid string, parent any, text string) string {
+		return jline(t, map[string]any{
+			"type": "user", "uuid": uuid, "parentUuid": parent,
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"origin":  map[string]any{"kind": "human"},
+			"message": map[string]any{"role": "user", "content": text},
+		})
+	}
+	reply := func(uuid, parent, msgID string, u map[string]any) string {
+		msg := map[string]any{
+			"role":    "assistant",
+			"id":      msgID,
+			"content": []any{map[string]any{"type": "text", "text": "ok"}},
+		}
+		if u != nil {
+			msg["usage"] = u
+		}
+		return jline(t, map[string]any{
+			"type": "assistant", "uuid": uuid, "parentUuid": parent,
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"requestId": "q-" + uuid,
+			"message":   msg,
+		})
+	}
+	return lines(t,
+		human("pa", nil, "a"),
+		reply("aa", "pa", "ma", usage(1000, 0)),
+		human("pb", "aa", "b"),
+		reply("ab", "pb", "mb", nil), // no usage at all: turn B has no usage-bearing reply
+		human("pc", "ab", "c"),
+		reply("ac", "pc", "mc", usage(2100, 0)),
+		human("pd", "ac", "d"),
+		reply("ad", "pd", "md", usage(2600, 0)),
+	)
+}
+
 func TestTurnSizesAreRealGrowth(t *testing.T) {
 	es := twoTurns(t)
 	nodes := Entries(es)
@@ -323,6 +366,28 @@ func TestTurnSizesFallBackAcrossACompactBoundary(t *testing.T) {
 		if n.ID == "p1" && (!n.TurnEstimated || n.TurnTokens <= 0 || n.TurnTokens > 90000) {
 			t.Fatalf("p1 = %d est %v, want a positive bytes estimate", n.TurnTokens, n.TurnEstimated)
 		}
+	}
+}
+
+func TestTurnSizesGrowthSurvivesATurnThatFellBackForItsPredecessor(t *testing.T) {
+	es := fourTurnsWithAGapInB(t)
+	nodes := Entries(es)
+	turnSizes(es, nodes)
+	got := map[string]adapter.Node{}
+	for _, n := range nodes {
+		got[n.ID] = n
+	}
+	if n := got["pa"]; n.TurnTokens != 1000 || n.TurnEstimated {
+		t.Fatalf("A = %d est %v, want 1000 real", n.TurnTokens, n.TurnEstimated)
+	}
+	if n := got["pb"]; !n.TurnEstimated {
+		t.Fatalf("B = %d est %v, want estimated (no usage-bearing reply)", n.TurnTokens, n.TurnEstimated)
+	}
+	if n := got["pc"]; !n.TurnEstimated {
+		t.Fatalf("C = %d est %v, want estimated (B has none)", n.TurnTokens, n.TurnEstimated)
+	}
+	if n := got["pd"]; n.TurnTokens != 500 || n.TurnEstimated {
+		t.Fatalf("D = %d est %v, want 2600-2100 = 500 real, from C's real end even though C itself fell back", n.TurnTokens, n.TurnEstimated)
 	}
 }
 
@@ -401,6 +466,40 @@ func TestBreakdownCountsASplitReplysThinkingOnce(t *testing.T) {
 	doubled := breakdown(withEntry(es, "a1t", duplicateOfA1t(t)), 0).Tokens[0]
 	if doubled != once {
 		t.Fatalf("thinking %d with another split entry, %d without: counted per entry", doubled, once)
+	}
+}
+
+// TestBreakdownGroupsThinkingByMessageIDNotUUID hand-computes twoTurns'
+// thinking share directly from its three replies' output_tokens and visible
+// bytes, so it is load-bearing on grouping by message.id: a1 and a1t are
+// two different uuids sharing one message id and usage, and a version that
+// grouped by uuid instead would double-count m1's output_tokens (once for
+// each of the two entries) instead of splitting one out across both.
+func TestBreakdownGroupsThinkingByMessageIDNotUUID(t *testing.T) {
+	es := twoTurns(t)
+	got := breakdown(es, 0).Tokens[0]
+
+	textBlock := func(s string) block {
+		return block{typ: "text", raw: map[string]any{"type": "text", "text": s}}
+	}
+	toolBlock := block{typ: "tool_use", raw: map[string]any{
+		"type": "tool_use", "id": "tu1", "name": "Bash", "input": map[string]any{"command": "ls"},
+	}}
+
+	// m1 (a1's text + a1t's tool_use, sharing one usage), m2 (a2), m3 (a3).
+	m1Visible := blockBytes(textBlock(strings.Repeat("t", 40)))/4 + blockBytes(toolBlock)/4
+	m2Visible := blockBytes(textBlock("reply two")) / 4
+	m3Visible := blockBytes(textBlock("reply three")) / 4
+
+	sum := 0.0
+	for _, think := range []float64{300 - m1Visible, 50 - m2Visible, 40 - m3Visible} {
+		if think > 0 {
+			sum += think
+		}
+	}
+	want := int(sum)
+	if got != want {
+		t.Fatalf("thinking = %d, want %d (out - visible bytes/4, grouped by message.id)", got, want)
 	}
 }
 
