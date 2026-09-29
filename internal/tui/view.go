@@ -99,7 +99,7 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 		if r.InRange {
 			return fit(b.String(), width), StyleRange
 		}
-		return fit(b.String(), width), StyleMuted
+		return fit(b.String(), width), StyleClaude
 	}
 	if r.Node.Broken {
 		b.WriteString("⚠ ")
@@ -1153,7 +1153,7 @@ func (u uiModel) View() string {
 			b.WriteString("  " + bar + h + "\n")
 		}
 		if g := groupLine(r, u.width-2-barWidth); g != "" {
-			b.WriteString("  " + bar + render(StyleMuted, g) + "\n")
+			b.WriteString("  " + bar + render(StyleClaude, g) + "\n")
 		}
 		if u.moving != nil && u.moving.rows[r.Node] {
 			// The origin of the section in hand: one placeholder, however
@@ -1164,7 +1164,7 @@ func (u uiModel) View() string {
 			placeheld = true
 		} else {
 			text, key := renderRow(r, start+i == u.m.Cursor, u.current, u.width-2-barWidth)
-			b.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)+compactNote(r)) + "\n")
+			b.WriteString(marker + bar + render(key, text) + render(StyleTool, cutNote(r.Node)) + render(StyleClaude, compactNote(r)) + "\n")
 		}
 		if i == blockAfter {
 			b.WriteString("  " + rowBar(Row{}, hasCurrent) + render(StyleTool, strings.Repeat("  ", blockDepth)+"⇢ "+u.moving.head.Node.Title) + "\n")

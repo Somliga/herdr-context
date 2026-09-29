@@ -72,13 +72,13 @@ in progress it changes to say so.
     used to be.
   - `⇠ moved from <id>` (muted) — the moved turn in its new line. A move
     within one line is a reorder and leaves no marker.
-  - `⋮ compacted by Claude Code — context starts here` (muted) — a native
+  - `⋮ compacted by Claude Code — context starts here` (terracotta, Claude's colour) — a native
     `/compact` or autocompact. Turns above it are already Claude Code's
     summary: not in the context, and they cannot be squashed, dropped or
     moved (a branch from them still works).
-  - `⋮ compacted by Claude Code · N turns` (muted) — those turns, one folded
+  - `⋮ compacted by Claude Code · N turns` (terracotta) — those turns, one folded
     row, so the tree shows the line as the agent reads it. `→` opens it (the
-    old turns show muted, one level in), `←` closes it. Branches off them
+    old turns show in grey, one level in), `←` closes it. Branches off them
     stay visible under it; ⏎ / `b` on it branch from its first turn. While it
     is closed it is the divider, and the note above is not repeated.
   - `● current` — the tip of the session you are in.

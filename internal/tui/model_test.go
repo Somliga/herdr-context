@@ -1094,3 +1094,34 @@ func TestRevealTipUnfoldsOnlyTheTipsSection(t *testing.T) {
 		t.Fatalf("rows %q, want p1 still folded and p2's section open", got)
 	}
 }
+
+// Filter mode on a branch with its own /compact: the branch's first own turn
+// is its session root, always shown, so the group row survives the filter and
+// the prompts inside the closed group stay hidden.
+func TestFilterKeepsTheGroupRowOfABranchWithItsOwnCompact(t *testing.T) {
+	h, a := adapter.KindHuman, adapter.KindAssistant
+	trunk := mkTypedSess("trunk", turn("n1", h))
+	branch := adapter.Session{ID: "branch", Title: "t-branch", Updated: time.Now(), Nodes: []adapter.Node{
+		{ID: "n1", Kind: h}, // copied graft point
+		{ID: "reply", Kind: a}, {ID: "h2", Kind: h},
+		{ID: "a2", Kind: a, AfterCompact: true}, {ID: "a2b", Kind: a}, // autocompact mid-turn
+		{ID: "h3", Kind: h}, {ID: "a3", Kind: a},
+	}}
+	st := &store.Store{Version: 1, Branches: map[string]store.Branch{
+		"branch": {GraftedFrom: store.From{SessionID: "trunk", Node: "n1"}},
+	}}
+	m := New(tree.Build([]adapter.Session{trunk, branch}, st))
+	m.Filter = FilterHuman
+	var group *Row
+	got := map[string]bool{}
+	for _, r := range m.Rows() {
+		got[r.Node.Node.ID] = true
+		if r.Group && r.Node.SessionID == "branch" {
+			r := r
+			group = &r
+		}
+	}
+	if group == nil || !got["h3"] || got["h2"] {
+		t.Fatalf("rows %v: want the branch's group row and h3, not h2 inside the closed group", ids(m.Rows()))
+	}
+}

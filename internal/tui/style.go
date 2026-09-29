@@ -23,9 +23,13 @@ const (
 	// "no trunk style" rule below with a margin mark rather than a row
 	// colour.
 	StyleTrunk
-	// StyleMuted is the compacted stretch: its group row and, open, its
-	// old turns (§3.4 amendment).
+	// StyleMuted is an old turn inside an open compacted group (§3.4
+	// amendment): readable, but set back from the live line.
 	StyleMuted
+	// StyleClaude marks what Claude Code itself did to the line — the
+	// compacted group row, its heading and the "context starts here" note —
+	// in Claude's own terracotta.
+	StyleClaude
 )
 
 // The palette lives here alone so it can be made configurable without
@@ -46,7 +50,8 @@ var palette = map[StyleKey]lipgloss.Style{
 	StyleCurrent:    lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "114"}),
 	StyleRange:      lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "90", Dark: "183"}).Bold(true),
 	StyleTrunk:      lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "30", Dark: "51"}),
-	StyleMuted:      lipgloss.NewStyle().Faint(true).Foreground(lipgloss.AdaptiveColor{Light: "248", Dark: "240"}),
+	StyleMuted:      lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "246", Dark: "244"}),
+	StyleClaude:     lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#C15F3C", Dark: "#D97757"}),
 }
 
 // styleFor picks the row's style key from what produced it, not from where it

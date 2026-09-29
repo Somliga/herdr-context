@@ -1960,3 +1960,27 @@ func TestScenarioALineWithoutACompactHasNoGroup(t *testing.T) {
 		}
 	}
 }
+
+// m into or out of a closed group is refused like any edit before a
+// /compact, and nothing is written.
+func TestScenarioAMoveOntoOrFromTheClosedGroupIsRefused(t *testing.T) {
+	up := tea.KeyMsg{Type: tea.KeyUp}
+	for name, keys := range map[string][]tea.Msg{
+		"u4 put down on the group row": {down, down, key('m'), up, up, enter},
+		"the group row put down on u4": {key('m'), down, down, enter},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			w.fixture(sidT, "compacted.jsonl")
+			before := w.storeFile()
+			u := drive(t, w.open(sidT), keys...)
+			if !strings.Contains(u.status, "before a /compact") {
+				t.Fatalf("status %q, want the before-a-/compact refusal", u.status)
+			}
+			w.checkTranscripts(1)
+			if w.storeFile() != before {
+				t.Fatal("a refused move wrote the store")
+			}
+		})
+	}
+}
