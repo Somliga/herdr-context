@@ -137,10 +137,11 @@ obvious from it.
 
 ## Context sizes and the sidebar
 
-- **A selection is a margin and a band, not a row colour** (amends the
+- **A selection is a margin, a band and the range colour** (amends the
   timeline spec's §6b). The `┃` moved from inside the indent to a fixed margin
-  column beside `>`: it is still the non-colour carrier. Rows keep their own
-  colour, so summaries stay told apart inside a range. The band is rendered
+  column beside `>`: it is still the non-colour carrier. Ranged rows take the
+  range colour except summaries and broken rows (the user preferred the
+  coloured text to bands alone). The band is rendered
   on every segment of the row (an inner reset would end it) and padded to the
   rows' width. Colour is not testable; widths and marks are.
 - **`]`/`[` step through the 10 largest turns of the session you are in,

@@ -96,7 +96,8 @@ in progress it changes to say so.
 - **The cursor and a range.** The cursor's row has a background band across
   its full width, with `>` in the margin. A range being selected has a
   fainter band and a `┃` in the margin's second column, so it reads as one
-  block. Rows keep their own colours inside it.
+  block, with its text in the range colour (summary rows and broken sessions
+  keep theirs).
 - **Range preview.** While a range is selected (`s`), the sidebar shows the
   range instead: its turns and size, its share of the line, and the context
   after a drop or a squash (`squash → ~55k`, assuming a ~1k summary; the

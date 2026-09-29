@@ -108,6 +108,9 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 
 	if r.Group && r.GroupClosed {
 		b.WriteString(groupText(r))
+		if r.InRange {
+			return fit(b.String(), width), StyleRange
+		}
 		return fit(b.String(), width), StyleClaude
 	}
 	if r.Node.Broken {
@@ -156,9 +159,20 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 	if r.Node.Compacted && key != StyleBroken && key != StyleCurrent {
 		key = StyleMuted // an old turn inside an open group
 	}
-	// A range no longer recolours its rows: every row keeps its own colour,
-	// and the selection is the ┃ in the margin (rowMarker) plus a background
-	// band (bandFor), drawn by View. §6b: the glyph carries it without colour.
+	// A range in progress is the thing the user is actively manipulating, so
+	// it takes the colour slot from rows whose colour is only decorative.
+	// It does NOT take it from a row whose colour is carrying something:
+	// Broken is data integrity, and the two summary colours are the only
+	// thing separating "knowledge arrived" from "this line contracted" at a
+	// glance. Those rows stay themselves; the ┃ in the margin (rowMarker)
+	// and the band (bandFor) still mark them as ranged — §6b: the glyph
+	// carries it without colour.
+	switch {
+	case !r.InRange:
+	case key == StyleBroken, key == StyleImport, key == StyleCompaction:
+	default:
+		key = StyleRange
+	}
 	return line, key
 }
 

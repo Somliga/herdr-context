@@ -96,15 +96,19 @@ func TestCurrentTipIsStyledAndMarked(t *testing.T) {
 	}
 }
 
-// Spec §6b: colour reinforces, it never carries alone. The range's
-// non-colour carrier is the ┃ in the margin; the band and cursor mark are
-// View's, so a row's own text and colour are untouched by a selection.
-func TestTheSelectionIsAMarginAndABandNotARowColour(t *testing.T) {
+// Spec §6b: colour reinforces, it never carries alone. A ranged row takes
+// the range colour, and its non-colour carrier is the ┃ in the margin, with
+// the band: View's, so the row's text itself is unchanged.
+func TestTheSelectionIsAColourAMarginAndABand(t *testing.T) {
 	n := &tree.Node{Node: adapter.Node{ID: "n1", Kind: adapter.KindAssistant, Title: "reply"}, SessionID: "s"}
 	in, inKey := renderRow(Row{Node: n, InRange: true}, false, "", 80)
 	out, outKey := renderRow(Row{Node: n}, false, "", 80)
-	if in != out || inKey != outKey {
-		t.Fatalf("a range changes the row itself: %q/%v vs %q/%v", in, inKey, out, outKey)
+	if in != out || inKey != StyleRange || outKey == StyleRange {
+		t.Fatalf("ranged %q/%v, not %q/%v: want the same text, the range colour only in range", in, inKey, out, outKey)
+	}
+	broken := &tree.Node{Node: adapter.Node{ID: "n1"}, SessionID: "s", Broken: true}
+	if _, key := renderRow(Row{Node: broken, InRange: true}, false, "", 80); key != StyleBroken {
+		t.Fatalf("broken in a range styled %v, want StyleBroken", key)
 	}
 	for _, c := range []struct {
 		inRange, cursor bool
@@ -127,7 +131,7 @@ func TestTheSelectionIsAMarginAndABandNotARowColour(t *testing.T) {
 // A summary row keeps its colour inside a range: the two summary colours are
 // the only at-a-glance difference between "knowledge arrived" and "this line
 // contracted", and a selection must not flatten them.
-func TestARangeKeepsEveryRowsOwnColour(t *testing.T) {
+func TestARangeKeepsTheSummaryColours(t *testing.T) {
 	for _, c := range []struct {
 		kind adapter.Kind
 		want StyleKey
