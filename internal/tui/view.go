@@ -94,6 +94,13 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 	if r.InRange {
 		b.WriteString("┃ ")
 	}
+	if r.Group && r.GroupClosed {
+		b.WriteString(groupText(r))
+		if r.InRange {
+			return fit(b.String(), width), StyleRange
+		}
+		return fit(b.String(), width), StyleMuted
+	}
 	if r.Node.Broken {
 		b.WriteString("⚠ ")
 	}
@@ -132,11 +139,11 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 	if r.Folded && r.BodyCount > 0 {
 		b.WriteString(fmt.Sprintf("  (%d)", r.BodyCount))
 	}
-	line := b.String()
-	if width > 0 && len([]rune(line)) > width {
-		line = string([]rune(line)[:width-1]) + "…"
-	}
+	line := fit(b.String(), width)
 	key := styleFor(r.Node, currentTip)
+	if r.Node.Compacted && key != StyleBroken && key != StyleCurrent {
+		key = StyleMuted // an old turn inside an open group
+	}
 	// A range in progress is the thing the user is actively manipulating, so
 	// it takes the colour slot from rows whose colour is only decorative.
 	// It does NOT take it from a row whose colour is carrying something:
@@ -151,6 +158,30 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 		key = StyleRange
 	}
 	return line, key
+}
+
+// fit truncates line to width columns, "…" last; width 0 is unlimited.
+func fit(line string, width int) string {
+	if width > 0 && len([]rune(line)) > width {
+		return string([]rune(line)[:width-1]) + "…"
+	}
+	return line
+}
+
+func groupText(r Row) string {
+	if r.GroupTurns == 1 {
+		return "⋮ compacted by Claude Code · 1 turn"
+	}
+	return fmt.Sprintf("⋮ compacted by Claude Code · %d turns", r.GroupTurns)
+}
+
+// groupLine is the open group's heading, drawn above its first turn's row
+// one level out (§3.4 amendment); "" for every other row.
+func groupLine(r Row, width int) string {
+	if !r.Group || r.GroupClosed {
+		return ""
+	}
+	return fit(strings.Repeat("  ", r.Depth-1)+groupText(r), width)
 }
 
 // headerLine is the line drawn above a session's first shown row (§5.3e):
@@ -179,11 +210,7 @@ func headerLine(r Row, width int) string {
 	if r.Node.FromRemoved {
 		b.WriteString("  from a removed stretch")
 	}
-	line := b.String()
-	if width > 0 && len([]rune(line)) > width {
-		line = string([]rune(line)[:width-1]) + "…"
-	}
-	return line
+	return fit(b.String(), width)
 }
 
 // rowBar is the left-margin bar marking the row's place on the trunk
@@ -226,9 +253,13 @@ func cutNote(n *tree.Node) string {
 
 // compactNote marks where a native /compact restarted the line: turns above
 // it are already summarised by Claude Code and cannot be edited. A folded
-// head carries its body's mark, since an autocompact lands mid-turn.
+// head carries its body's mark, since an autocompact lands mid-turn. A
+// closed group row is the divider itself, so the note is not repeated.
 func compactNote(r Row) string {
 	const note = "   ⋮ compacted by Claude Code — context starts here"
+	if r.GroupClosed {
+		return ""
+	}
 	if r.Node.Node.AfterCompact {
 		return note
 	}
@@ -334,8 +365,9 @@ func (u *uiModel) rebuild() {
 			roots = scoped
 		}
 	}
-	rangeEnd := u.m.RangeEnd
+	rangeEnd, open := u.m.RangeEnd, u.m.CompactOpen
 	u.m = New(roots)
+	u.m.CompactOpen = open
 	u.m.SetTrunk(tree.Trunk(u.roots, scope))
 	// tree.Build runs once, in Run, so a scope toggle re-roots the SAME
 	// nodes — the range's end is still a live pointer and there is no reason
@@ -1119,6 +1151,9 @@ func (u uiModel) View() string {
 		}
 		if h := headerLine(r, u.width-2-barWidth); h != "" {
 			b.WriteString("  " + bar + h + "\n")
+		}
+		if g := groupLine(r, u.width-2-barWidth); g != "" {
+			b.WriteString("  " + bar + render(StyleMuted, g) + "\n")
 		}
 		if u.moving != nil && u.moving.rows[r.Node] {
 			// The origin of the section in hand: one placeholder, however

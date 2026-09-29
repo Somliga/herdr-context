@@ -76,6 +76,11 @@ in progress it changes to say so.
     `/compact` or autocompact. Turns above it are already Claude Code's
     summary: not in the context, and they cannot be squashed, dropped or
     moved (a branch from them still works).
+  - `⋮ compacted by Claude Code · N turns` (muted) — those turns, one folded
+    row, so the tree shows the line as the agent reads it. `→` opens it (the
+    old turns show muted, one level in), `←` closes it. Branches off them
+    stay visible under it; ⏎ / `b` on it branch from its first turn. While it
+    is closed it is the divider, and the note above is not repeated.
   - `● current` — the tip of the session you are in.
 
 ## Squash

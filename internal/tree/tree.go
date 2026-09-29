@@ -41,8 +41,12 @@ type Node struct {
 	// opens a turn exactly like a prompt, §3.1/§5.3f), or the first entry of a
 	// session that does not start with either. Everything until the next head
 	// is that section's body.
-	IsHead   bool
-	Children []*Node
+	IsHead bool
+	// Compacted marks a turn a native /compact already summarised: every
+	// node before the first section head at or after the line's LAST
+	// AfterCompact node (§3.4 amendment). The TUI folds them into one row.
+	Compacted bool
+	Children  []*Node
 }
 
 // attachPoint finds where a grafted child's own line begins. A grafted
@@ -92,6 +96,31 @@ func attachPoint(chain []*Node, graftNode string, parentNodes map[string]*Node) 
 	last := chain[len(chain)-1]
 	last.Superseded = false
 	return last
+}
+
+// markCompacted marks everything before the first head at or after the
+// last AfterCompact node. An autocompact lands mid-turn, so the turn it hit
+// is inside; with no head after it, the whole line is.
+func markCompacted(nodes []*Node) {
+	last := -1
+	for i, n := range nodes {
+		if n.Node.AfterCompact {
+			last = i
+		}
+	}
+	if last < 0 {
+		return
+	}
+	end := len(nodes)
+	for i := last; i < len(nodes); i++ {
+		if nodes[i].IsHead {
+			end = i
+			break
+		}
+	}
+	for _, n := range nodes[:end] {
+		n.Compacted = true
+	}
 }
 
 // lastCopied is the last node of chain that is also a node of the line it
@@ -201,6 +230,7 @@ func Build(sessions []adapter.Session, s *store.Store) []*Node {
 			}
 			prev = n
 		}
+		markCompacted(order[sess.ID])
 	}
 
 	// Graft edges come out of a map, whose iteration order Go randomises per

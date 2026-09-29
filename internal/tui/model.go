@@ -21,6 +21,17 @@ type Row struct {
 	// InRange is whether this row falls within the current summarisation
 	// range. See Model.BeginRange.
 	InRange bool
+	// Group marks the row standing for its session's compacted stretch
+	// (§3.4 amendment): the stretch's first shown turn, so ⏎/b/s act on a
+	// real turn and every node still has at most one row. Closed, the row
+	// is drawn as the group; open, it is the turn's own row with the group
+	// heading on the line above (groupLine). GroupTurns is the heads it
+	// holds.
+	Group      bool
+	GroupTurns int
+	// GroupClosed is set on every row of a session whose group row is
+	// drawn closed.
+	GroupClosed bool
 }
 
 // bodyCount counts a node's descendants that are its own section body: same
@@ -67,6 +78,9 @@ type Model struct {
 	// RangeEnd is the fixed end of a summarisation range, set by BeginRange.
 	// nil means no range is in progress.
 	RangeEnd *tree.Node
+	// CompactOpen is which sessions have their compacted stretch open;
+	// closed by default.
+	CompactOpen map[string]bool
 
 	parent map[*tree.Node]*tree.Node
 }
@@ -186,10 +200,14 @@ func (m *Model) Window(height int) ([]Row, int, int) {
 	}
 	// A row with a header is two lines (§5.3e), so this fits lines, not rows.
 	lines := func(i int) int {
+		n := 1
 		if rows[i].Node.IsSessionRoot {
-			return 2
+			n++
 		}
-		return 1
+		if groupLine(rows[i], 0) != "" {
+			n++
+		}
+		return n
 	}
 	if len(rows) == 0 {
 		return rows, 0, 0
@@ -450,10 +468,14 @@ func childDepth(n, c *tree.Node, depth int) int {
 // none: a branch's header sits one level out from its turns, a root line's
 // at its turns' level (§5.3e).
 func headerDepth(r Row) int {
-	if r.Node.IsSessionRoot && r.Node.Grafted {
-		return r.Depth - 1
+	d := r.Depth
+	if r.Group && !r.GroupClosed {
+		d-- // the open group's heading, one level out
 	}
-	return r.Depth
+	if r.Node.IsSessionRoot && r.Node.Grafted {
+		d--
+	}
+	return d
 }
 
 // Rows flattens the visible forest depth-first.
@@ -466,25 +488,60 @@ func headerDepth(r Row) int {
 func (m *Model) Rows() []Row {
 	var out []Row
 	visited := map[*tree.Node]bool{}
+	anchor := map[string]int{} // session -> index of its group row
+	turns := map[string]int{}  // session -> shown heads in its group
 	var walk func(n *tree.Node, depth int, nOnTrunk bool)
 	walk = func(n *tree.Node, depth int, nOnTrunk bool) {
 		if visited[n] {
 			return
 		}
 		visited[n] = true
+		// The compacted stretch counts and anchors on shown rows only: a
+		// branch's copied prefix is Superseded and makes no group.
+		grouped := n.Compacted && !n.Superseded
+		closed := grouped && !m.CompactOpen[n.SessionID]
+		if grouped && n.IsHead {
+			turns[n.SessionID]++
+		}
 		// A Superseded node never has a row, so it can never be reached to
 		// unfold, and folding it would bury its own body permanently. Belt
-		// and braces alongside New() never setting m.Folded for one.
-		folded := m.Folded[n] && !n.Superseded
+		// and braces alongside New() never setting m.Folded for one. A
+		// closed group folds every turn in it: their bodies have no rows,
+		// but the branches off them still walk (bodyGrafts).
+		folded := (m.Folded[n] || closed) && !n.Superseded
 		shown := m.shows(n)
+		_, anchored := anchor[n.SessionID]
+		isAnchor := shown && grouped && !anchored
+		if isAnchor {
+			anchor[n.SessionID] = len(out)
+		} else if closed {
+			shown = false
+		}
+		// An open group's turns sit one level in, under its heading.
+		d := depth
+		if grouped && !closed {
+			d++
+		}
 		if shown {
+			_, hasGroup := anchor[n.SessionID]
 			out = append(out, Row{
-				Node: n, Depth: depth,
+				Node: n, Depth: d,
 				HasChildren: len(n.Children) > 0,
 				Folded:      folded,
 				BodyCount:   bodyCount(n),
 				OnTrunk:     nOnTrunk,
+				Group:       isAnchor,
+				GroupClosed: hasGroup && !m.CompactOpen[n.SessionID],
 			})
+		}
+		// A child of the same session takes n's depth without the group's
+		// indent, and adds its own if it is in the group too.
+		childAt := func(c *tree.Node) int {
+			cd := childDepth(n, c, d)
+			if c.SessionID == n.SessionID {
+				cd -= d - depth
+			}
+			return cd
 		}
 		order, onTrunkOf := m.orderedChildren(n, nOnTrunk)
 		if folded {
@@ -498,17 +555,20 @@ func (m *Model) Rows() []Row {
 				if c.SessionID == n.SessionID && !c.IsHead {
 					continue // folding hides this node's own body
 				}
-				walk(c, childDepth(n, c, depth), onTrunkOf[c])
+				walk(c, childAt(c), onTrunkOf[c])
 			}
 			return
 		}
 		// A hidden (filtered) node still does not hide its children.
 		for _, c := range order {
-			walk(c, childDepth(n, c, depth), onTrunkOf[c])
+			walk(c, childAt(c), onTrunkOf[c])
 		}
 	}
 	for _, r := range m.Roots {
 		walk(r, 0, m.onTrunk(r))
+	}
+	for sid, i := range anchor {
+		out[i].GroupTurns = turns[sid]
 	}
 	if from, to, ok := m.rangeIndices(out); ok {
 		for i := from; i <= to; i++ {
@@ -551,8 +611,17 @@ func (m *Model) Fold() {
 	if n == nil {
 		return
 	}
-	if len(n.Children) > 0 && !m.Folded[n] {
+	rows := m.Rows()
+	r := rows[m.Cursor]
+	switch {
+	case r.Group && r.GroupClosed:
+		// the closed group row hides its turn's fold: step out instead
+	case len(n.Children) > 0 && !m.Folded[n]:
 		m.Folded[n] = true
+		return
+	case r.Group:
+		// the open group's first turn, already folded: ← closes the group
+		delete(m.CompactOpen, n.SessionID)
 		return
 	}
 	// Jump to the row drawn one level out: the nearest row above with a
@@ -560,7 +629,6 @@ func (m *Model) Fold() {
 	// the graph says (a lifted graft, a Superseded or folded-away ancestor).
 	// A branch's header line is drawn one level out from its turns and
 	// belongs to its first turn's row (§5.3e), so it counts at its own depth.
-	rows := m.Rows()
 	for i := m.Cursor - 1; i >= 0; i-- {
 		if headerDepth(rows[i]) < headerDepth(rows[m.Cursor]) {
 			m.Cursor = i
@@ -608,6 +676,9 @@ func (m *Model) reveal(n *tree.Node) {
 	if n == nil {
 		return
 	}
+	if n.Compacted {
+		m.open(n.SessionID) // a closed group holding it opens first
+	}
 	// Rows() lets a folded node hide only its own session's body entries.
 	// The walk stops where n's session hangs off another: a folded turn
 	// shows the branches off its body already (bodyGrafts), so the turn a
@@ -625,9 +696,23 @@ func (m *Model) reveal(n *tree.Node) {
 	}
 }
 
-// Unfold expands the selected node.
+// Unfold expands the selected node, or opens the closed group it stands for.
 func (m *Model) Unfold() {
-	if n := m.Selected(); n != nil {
-		delete(m.Folded, n)
+	n := m.Selected()
+	if n == nil {
+		return
 	}
+	if r := m.Rows()[m.Cursor]; r.Group && r.GroupClosed {
+		m.open(n.SessionID)
+		return
+	}
+	delete(m.Folded, n)
+}
+
+// open opens session sid's compacted stretch.
+func (m *Model) open(sid string) {
+	if m.CompactOpen == nil {
+		m.CompactOpen = map[string]bool{}
+	}
+	m.CompactOpen[sid] = true
 }

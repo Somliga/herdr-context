@@ -265,8 +265,15 @@ func typed(s string) []tea.Msg {
 	return out
 }
 
-// unfold opens every section, as → on each would.
-func unfold(u uiModel) { u.m.Folded = map[*tree.Node]bool{} }
+// unfold opens every section and every compacted stretch, as → on each would.
+func unfold(u uiModel) {
+	u.m.Folded = map[*tree.Node]bool{}
+	for _, r := range u.m.Rows() {
+		if r.Group {
+			u.m.open(r.Node.SessionID)
+		}
+	}
+}
 
 // rowOf is the index of sid's row for entry id, -1 if it has none.
 func rowOf(u uiModel, sid, id string) int {
@@ -294,9 +301,17 @@ func cursorTo(t *testing.T, u uiModel, sid, id string) uiModel {
 // is still a row and a join is still the screen.
 func screen(u uiModel) []string {
 	unfold(u)
+	return asShown(u)
+}
+
+// asShown is screen without unfolding anything: the rows as they stand.
+func asShown(u uiModel) []string {
 	var out []string
 	for _, r := range u.m.Rows() {
 		line, _ := renderRow(r, false, u.current, 0)
+		if g := groupLine(r, 0); g != "" {
+			line = g + "\n" + line
+		}
 		if h := headerLine(r, 0); h != "" {
 			line = h + "\n" + line
 		}
@@ -1803,5 +1818,145 @@ func TestScenarioAnEditedLineShowsAnEstimatedContextSize(t *testing.T) {
 	var k int
 	if _, err := fmt.Sscanf(h[i+len(" · ~"):], "%dk", &k); err != nil || k <= 0 || k >= 90 {
 		t.Fatalf("estimate %q is not a drop's smaller number", h[i:])
+	}
+}
+
+// The stretch a native /compact summarised is one folded row (§3.4
+// amendment): closed by default, → opens it muted one level in, ← on it
+// closes it, and the divider note is not repeated while it is closed.
+func TestScenarioTheCompactedStretchIsOneFoldedRow(t *testing.T) {
+	w := newWorld(t)
+	w.fixture(sidT, "compacted.jsonl")
+	u := w.open(sidT)
+	got := strings.Join(asShown(u), "\n")
+	want := shortID(sidT) + "\n⋮ compacted by Claude Code · 2 turns\n▸ user: three  (1)\n▸ user: four  (1)"
+	if got != want {
+		t.Fatalf("closed:\n%s\nwant:\n%s", got, want)
+	}
+	if u.m.Cursor != 0 || u.m.Selected().Node.ID != "u1" {
+		t.Fatalf("the group row stands on %+v, want u1", u.m.Selected())
+	}
+
+	u = drive(t, u, key('l'))
+	rows := u.m.Rows()
+	got = strings.Join(asShown(u), "\n")
+	want = shortID(sidT) + "\n⋮ compacted by Claude Code · 2 turns\n  ▸ user: one  (1)\n  ▸ user: two  (1)\n" +
+		"▸ user: three  (1)   ⋮ compacted by Claude Code — context starts here\n▸ user: four  (1)"
+	if got != want {
+		t.Fatalf("open:\n%s\nwant:\n%s", got, want)
+	}
+	for i, id := range []string{"u1", "u2", "u3"} {
+		_, style := renderRow(rows[i], false, u.current, 0)
+		if muted := style == StyleMuted; muted != (id != "u3") {
+			t.Errorf("%s style %v: only the old turns are muted", id, style)
+		}
+	}
+	if _, _, total := u.m.Window(3); total != 4 {
+		t.Fatalf("open: %d rows, want 4", total)
+	}
+	// ⏎ on u1 opens its body, ← folds it back, ← again closes the group.
+	u = drive(t, u, key('l'))
+	if len(u.m.Rows()) != 5 {
+		t.Fatalf("→ on the open group's first turn did not unfold it:\n%s", strings.Join(asShown(u), "\n"))
+	}
+	u = drive(t, u, key('h'), key('h'))
+	if got := strings.Join(asShown(u), "\n"); !strings.HasPrefix(got, shortID(sidT)+"\n⋮ compacted by Claude Code · 2 turns\n▸ user: three") {
+		t.Fatalf("← on the group row did not close it:\n%s", got)
+	}
+}
+
+// A branch off a turn inside a closed group hangs under the group row.
+func TestScenarioABranchOffACompactedTurnShowsWhileClosed(t *testing.T) {
+	w := newWorld(t)
+	w.fixture(sidT, "compacted.jsonl")
+	br := w.branch(sidT, sidT, "u2")
+	u := w.open(sidT)
+	rows := u.m.Rows()
+	if !rows[0].Group || !rows[0].GroupClosed {
+		t.Fatalf("no closed group row:\n%s", strings.Join(asShown(u), "\n"))
+	}
+	found := false
+	for _, r := range rows {
+		if r.Node.SessionID == br {
+			found = true
+			if r.Depth != rows[0].Depth+2 {
+				t.Errorf("branch row at depth %d, want %d", r.Depth, rows[0].Depth+2)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the branch is hidden by the closed group:\n%s", strings.Join(asShown(u), "\n"))
+	}
+	// The branch's copied prefix has no rows, so it gets no group of its own.
+	n := 0
+	for _, r := range u.m.Rows() {
+		if r.Group {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("%d group rows, want 1", n)
+	}
+}
+
+// ⏎ and b on the closed group row act on its first turn.
+func TestScenarioBranchingFromTheClosedGroupRow(t *testing.T) {
+	for _, how := range []string{"continue", "b"} {
+		t.Run(how, func(t *testing.T) {
+			w := newWorld(t)
+			w.fixture(sidT, "compacted.jsonl")
+			u := w.open(sidT)
+			if !u.m.Rows()[0].Group {
+				t.Fatal("cursor is not on the group row")
+			}
+			if how == "b" {
+				u = drive(t, u, key('b'))
+			} else {
+				u = drive(t, u, enter, enter)
+			}
+			uuids, leaf := w.history(w.branchOff(sidT))
+			if strings.Join(uuids, ",") != "u1,a1" || leaf != "a1" {
+				t.Fatalf("branch holds %v leaf %s, want u1,a1 (status %q)", uuids, leaf, u.status)
+			}
+		})
+	}
+}
+
+// A range from the group row reaches into it and is refused, unpaid.
+func TestScenarioARangeIntoTheClosedGroupIsRefused(t *testing.T) {
+	w := newWorld(t)
+	w.fixture(sidT, "compacted.jsonl")
+	u := w.open(sidT)
+	u = drive(t, u, down, key('s'), tea.KeyMsg{Type: tea.KeyUp}, enter, enter) // u3 end, group row start, squash
+	if u.confirm != "" || !strings.Contains(u.status, "before a /compact — already summarised by Claude Code") {
+		t.Fatalf("confirm %q, status %q", u.confirm, u.status)
+	}
+	if w.summaries() != 0 {
+		t.Fatal("a refused squash was paid for")
+	}
+}
+
+// A reveal of a node inside a closed group opens it first.
+func TestScenarioARevealIntoTheClosedGroupOpensIt(t *testing.T) {
+	w := newWorld(t)
+	w.fixture(sidT, "compacted.jsonl")
+	u := w.open(sidT)
+	u.m.Reveal(sidT, "a1")
+	if n := u.m.Selected(); n == nil || n.Node.ID != "a1" {
+		t.Fatalf("cursor on %+v, want a1:\n%s", n, strings.Join(asShown(u), "\n"))
+	}
+	if r := u.m.Rows()[0]; !r.Group || r.GroupClosed {
+		t.Fatalf("the group did not open:\n%s", strings.Join(asShown(u), "\n"))
+	}
+}
+
+// A line with no compact has no group row.
+func TestScenarioALineWithoutACompactHasNoGroup(t *testing.T) {
+	w := newWorld(t)
+	w.trunk(sidT, "t1", "t2")
+	for _, r := range w.open(sidT).m.Rows() {
+		if r.Group || r.GroupClosed || r.Node.Compacted {
+			t.Fatalf("group row on a plain line: %+v", r)
+		}
 	}
 }

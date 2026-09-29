@@ -727,3 +727,33 @@ func TestABranchOffAnUndoneVersionStaysVisible(t *testing.T) {
 		t.Fatalf("brUnderV1=%v goneMarked=%v, want both", brUnderV1, goneMarked)
 	}
 }
+
+// Everything before the first turn opened after the LAST native compact is
+// the compacted stretch (§3.4 amendment): an earlier compaction and the turn
+// an autocompact landed in are inside it.
+func TestBuildMarksTheStretchBeforeTheLastCompact(t *testing.T) {
+	h, a := adapter.KindHuman, adapter.KindAssistant
+	s := adapter.Session{ID: "s1", Nodes: []adapter.Node{
+		{ID: "u1", Kind: h}, {ID: "a1", Kind: a},
+		{ID: "u2", Kind: h, AfterCompact: true}, {ID: "a2", Kind: a}, // a manual /compact
+		{ID: "u3", Kind: h}, {ID: "a3", Kind: a, AfterCompact: true}, {ID: "a3b", Kind: a}, // autocompact mid-turn
+		{ID: "u4", Kind: h}, {ID: "a4", Kind: a},
+	}}
+	roots := Build([]adapter.Session{s, sess("plain", "n1", "n2")}, emptyStore())
+	var got []string
+	var walk func(n *Node)
+	walk = func(n *Node) {
+		if n.Compacted {
+			got = append(got, n.Node.ID)
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	for _, r := range roots {
+		walk(r)
+	}
+	if strings.Join(got, ",") != "u1,a1,u2,a2,u3,a3,a3b" {
+		t.Fatalf("compacted %v, want u1..a3b", got)
+	}
+}
