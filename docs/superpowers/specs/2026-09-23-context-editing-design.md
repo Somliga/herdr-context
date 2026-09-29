@@ -372,6 +372,33 @@ restarts. Splice follows `parentUuid` as graft does, so it sees only the line
 after the last boundary. The tree also shows the turns before it; a branch
 can start from one of them (§2.5b), an edit cannot.
 
+**Amended 2026-09-29 (user): the tree shows the line as the agent reads it.**
+
+- **One row for the compacted stretch.** In each session whose line restarts
+  at a native `/compact`, everything before the first turn opened after the
+  *last* boundary is one row, folded by default:
+  `⋮ compacted by Claude Code · <N> turns` (muted). N counts the section heads
+  it holds. Autocompact usually lands mid-turn, so the turn that was running
+  when it hit (its prompt before the boundary, its continuation after) is
+  inside the group; the group ends where the first turn typed after the
+  boundary begins. Earlier compactions in the same file are inside the group
+  too.
+- **Unfolding.** `→` on the row opens the group: the old turns show below it,
+  muted, one level in, each folding as usual. `←` on the group row closes it.
+  The state is per overlay, closed again on reload.
+- **Still usable.** Branches off turns inside a closed group stay visible:
+  they hang under the group row, as bodyGrafts do under a folded head. Any
+  move of the cursor to a node inside a closed group (a reveal, the tip after
+  an edit, a search) opens it first. `⏎` / `b` / branch here on the group row
+  act on its first turn; an edit that reaches into the group is refused with
+  §3.3's "before a /compact" message.
+- **The divider stays.** The first row after the boundary keeps the
+  `⋮ compacted by Claude Code — context starts here` note (§5.4) when the
+  group is open; when it is closed the group row itself is the divider and
+  the note is not repeated.
+- A branch's copied (Superseded) prefix has no rows, so a group counts and
+  anchors on shown rows only; a session with none shows no group row.
+
 ## 4. Squash, end to end
 
 1. Confirm (§2.3), with the busy check (§6.1).
