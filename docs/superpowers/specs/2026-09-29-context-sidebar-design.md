@@ -50,17 +50,19 @@ counts as injected.
 
 ### 3.1 Per turn
 
-A turn's size is the **real growth in context** it caused: the context number
-(§3.1 of the meter spec: input + cache read + cache creation) of the first
-reply after the turn ends, minus that of the last reply before it started. For
-the line's last turn, whose next reply has not been written yet, it is the
-line's number minus the previous turn's end, plus the last reply's
-`output_tokens`.
+A turn's size is the **real growth in context** it caused. A turn's **end**
+is its last usage-bearing reply's context number (§3.1 of the meter spec:
+input + cache read + cache creation) plus that reply's `output_tokens`: what
+the context holds once the turn is done. A turn's size is its end minus the
+previous turn's end (0 before the first turn). The sizes of a line's turns
+sum to its last turn's end.
 
-Where a needed reply has no usage, as after an edit, in an older transcript,
-or on a synthetic reply, the size falls back to the turn's bytes ÷ 4 and is
-marked estimated. A negative growth, as after a rewind or a compaction inside
-the turn, also falls back.
+The size falls back to the turn's bytes ÷ 4, marked estimated, when:
+
+- this turn or the previous one has no usage-bearing reply, as after an
+  edit, in an older transcript, or with only synthetic replies;
+- the growth is ≤ 0;
+- a `compact_boundary` lies between the two replies used.
 
 ### 3.2 Per type, for the line
 
