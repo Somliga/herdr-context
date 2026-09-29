@@ -1499,3 +1499,34 @@ func TestCompactNoteMarksWhereTheContextStarts(t *testing.T) {
 		t.Error("an unfolded head repeats the mark its body row shows")
 	}
 }
+
+func TestAFoldedTurnShowsItsSize(t *testing.T) {
+	n := &tree.Node{SessionID: "S", IsHead: true, Node: adapter.Node{ID: "p", Title: "user: hi", Kind: adapter.KindHuman, TurnTokens: 12400}}
+	got, _ := renderRow(Row{Node: n, Folded: true, BodyCount: 8}, false, "", 0)
+	if !strings.HasSuffix(got, "(8)  12k") {
+		t.Fatalf("%q", got)
+	}
+	n.Node.TurnEstimated = true
+	if got, _ := renderRow(Row{Node: n, Folded: true, BodyCount: 8}, false, "", 0); !strings.HasSuffix(got, "(8)  ~12k") {
+		t.Fatalf("estimate: %q", got)
+	}
+	body := &tree.Node{SessionID: "S", Node: adapter.Node{ID: "a", Title: "assistant: x", Kind: adapter.KindAssistant}}
+	if got, _ := renderRow(Row{Node: body}, false, "", 0); strings.Contains(got, "k") && strings.HasSuffix(got, "k") {
+		t.Fatalf("a body row shows a size: %q", got)
+	}
+}
+
+func TestAnOpenTurnShowsItsSizeOnItsPrompt(t *testing.T) {
+	n := &tree.Node{SessionID: "S", IsHead: true, Node: adapter.Node{ID: "p", Title: "user: hi", Kind: adapter.KindHuman, TurnTokens: 3000}}
+	if got, _ := renderRow(Row{Node: n, Folded: false, BodyCount: 8}, false, "", 0); !strings.HasSuffix(got, "  3k") {
+		t.Fatalf("%q", got)
+	}
+}
+
+func TestTheClosedGroupShowsItsTotal(t *testing.T) {
+	r := Row{Group: true, GroupClosed: true, GroupTurns: 2, GroupTokens: 40000,
+		Node: &tree.Node{SessionID: "S", IsHead: true, Node: adapter.Node{ID: "u1"}}}
+	if got, _ := renderRow(r, false, "", 0); !strings.HasSuffix(got, "· 2 turns · ~40k") {
+		t.Fatalf("%q", got)
+	}
+}

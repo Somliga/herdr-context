@@ -29,6 +29,10 @@ type Row struct {
 	// holds.
 	Group      bool
 	GroupTurns int
+	// GroupTokens is the group's total context size (§5): the sum of
+	// TurnTokens over its head nodes, set on the anchor row alongside
+	// GroupTurns.
+	GroupTokens int
 	// GroupClosed is set on every row of a session whose group row is
 	// drawn closed.
 	GroupClosed bool
@@ -490,6 +494,7 @@ func (m *Model) Rows() []Row {
 	visited := map[*tree.Node]bool{}
 	anchor := map[string]int{} // session -> index of its group row
 	turns := map[string]int{}  // session -> shown heads in its group
+	tokens := map[string]int{} // session -> summed TurnTokens of those heads
 	var walk func(n *tree.Node, depth int, nOnTrunk bool)
 	walk = func(n *tree.Node, depth int, nOnTrunk bool) {
 		if visited[n] {
@@ -502,6 +507,7 @@ func (m *Model) Rows() []Row {
 		closed := grouped && !m.CompactOpen[n.SessionID]
 		if grouped && n.IsHead {
 			turns[n.SessionID]++
+			tokens[n.SessionID] += n.Node.TurnTokens
 		}
 		// A Superseded node never has a row, so it can never be reached to
 		// unfold, and folding it would bury its own body permanently. Belt
@@ -569,6 +575,7 @@ func (m *Model) Rows() []Row {
 	}
 	for sid, i := range anchor {
 		out[i].GroupTurns = turns[sid]
+		out[i].GroupTokens = tokens[sid]
 	}
 	if from, to, ok := m.rangeIndices(out); ok {
 		for i := from; i <= to; i++ {

@@ -1322,14 +1322,14 @@ func TestEachSessionStartsWithItsOwnHeaderLine(t *testing.T) {
 	got, _ := rowLines(t, u)
 	want := []string{
 		"▎ " + shortID(sidT),
-		"▎ ▸ user: prompt NUGGET  (2)",
-		"▎ ▸ user: prompt TRIPPLEDIP  (2)",
+		"▎ ▸ user: prompt NUGGET  (2)  ~<1k",
+		"▎ ▸ user: prompt TRIPPLEDIP  (2)  ~<1k",
 		"▎   ↳ " + shortID(b),
-		"▎     ▸ user: prompt BEATS  (2)",
-		"▎     ▸ user: prompt BEATS22  (2)",
+		"▎     ▸ user: prompt BEATS  (2)  ~<1k",
+		"▎     ▸ user: prompt BEATS22  (2)  ~<1k",
 		"    ↳ " + shortID(c),
-		"      ▸ user: prompt HORSE  (2)",
-		"      ▸ user: prompt HORSE22  (2)",
+		"      ▸ user: prompt HORSE  (2)  ~<1k",
+		"      ▸ user: prompt HORSE22  (2)  ~<1k",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -1821,6 +1821,46 @@ func TestScenarioAnEditedLineShowsAnEstimatedContextSize(t *testing.T) {
 	}
 }
 
+// TestScenarioFoldedTurnsShowTheirSizes is task 2: every turn head row on
+// screen carries a size, given real-shaped usage.
+func TestScenarioFoldedTurnsShowTheirSizes(t *testing.T) {
+	w := newWorld(t)
+	w.durations = true
+	w.trunk(sidT, "t1", "t2", "t3")
+	path := w.path(sidT)
+	es, _, err := claude.ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := map[string]int{"t1-r": 5000, "t2-r": 40000, "t3-r": 90000}
+	var out []byte
+	for _, e := range es {
+		if n, ok := usage[e.UUID()]; ok {
+			e.Raw["message"].(map[string]any)["usage"] = map[string]any{
+				"input_tokens": 0, "cache_read_input_tokens": n, "cache_creation_input_tokens": 0, "output_tokens": 5}
+		}
+		b, err := claude.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(append(out, b...), '\n')
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	u := w.open(sidT)
+	rows := asShown(u)
+	for _, l := range rows {
+		if strings.HasPrefix(l, shortID(sidT)) {
+			continue // the session header, not a turn row
+		}
+		if !strings.Contains(l, "k") {
+			t.Fatalf("a folded turn row has no size: %q\nall:\n%s", l, strings.Join(rows, "\n"))
+		}
+	}
+}
+
 // The stretch a native /compact summarised is one folded row (§3.4
 // amendment): closed by default, → opens it muted one level in, ← on it
 // closes it, and the divider note is not repeated while it is closed.
@@ -1829,7 +1869,7 @@ func TestScenarioTheCompactedStretchIsOneFoldedRow(t *testing.T) {
 	w.fixture(sidT, "compacted.jsonl")
 	u := w.open(sidT)
 	got := strings.Join(asShown(u), "\n")
-	want := shortID(sidT) + "\n⋮ compacted by Claude Code · 2 turns\n▸ user: three  (1)\n▸ user: four  (1)"
+	want := shortID(sidT) + "\n⋮ compacted by Claude Code · 2 turns · ~<1k\n▸ user: three  (1)  ~<1k\n▸ user: four  (1)  ~<1k"
 	if got != want {
 		t.Fatalf("closed:\n%s\nwant:\n%s", got, want)
 	}
@@ -1840,8 +1880,8 @@ func TestScenarioTheCompactedStretchIsOneFoldedRow(t *testing.T) {
 	u = drive(t, u, key('l'))
 	rows := u.m.Rows()
 	got = strings.Join(asShown(u), "\n")
-	want = shortID(sidT) + "\n⋮ compacted by Claude Code · 2 turns\n  ▸ user: one  (1)\n  ▸ user: two  (1)\n" +
-		"▸ user: three  (1)   ⋮ compacted by Claude Code — context starts here\n▸ user: four  (1)"
+	want = shortID(sidT) + "\n⋮ compacted by Claude Code · 2 turns · ~<1k\n  ▸ user: one  (1)  ~<1k\n  ▸ user: two  (1)  ~<1k\n" +
+		"▸ user: three  (1)  ~<1k   ⋮ compacted by Claude Code — context starts here\n▸ user: four  (1)  ~<1k"
 	if got != want {
 		t.Fatalf("open:\n%s\nwant:\n%s", got, want)
 	}
@@ -1860,7 +1900,7 @@ func TestScenarioTheCompactedStretchIsOneFoldedRow(t *testing.T) {
 		t.Fatalf("→ on the open group's first turn did not unfold it:\n%s", strings.Join(asShown(u), "\n"))
 	}
 	u = drive(t, u, key('h'), key('h'))
-	if got := strings.Join(asShown(u), "\n"); !strings.HasPrefix(got, shortID(sidT)+"\n⋮ compacted by Claude Code · 2 turns\n▸ user: three") {
+	if got := strings.Join(asShown(u), "\n"); !strings.HasPrefix(got, shortID(sidT)+"\n⋮ compacted by Claude Code · 2 turns · ~<1k\n▸ user: three") {
 		t.Fatalf("← on the group row did not close it:\n%s", got)
 	}
 }

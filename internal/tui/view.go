@@ -74,6 +74,19 @@ func humanTokens(n int) string {
 	}
 }
 
+// turnSize is a head node's turn context shown at the end of its row (§5):
+// its TurnTokens formatted, "~" prefixed when estimated, "" when there is
+// none.
+func turnSize(n *tree.Node) string {
+	if n.Node.TurnTokens == 0 {
+		return ""
+	}
+	if n.Node.TurnEstimated {
+		return "  ~" + humanTokens(n.Node.TurnTokens)
+	}
+	return "  " + humanTokens(n.Node.TurnTokens)
+}
+
 func humanBytes(n int64) string {
 	switch {
 	case n >= 1<<20:
@@ -139,6 +152,9 @@ func renderRow(r Row, selected bool, currentSession string, width int) (string, 
 	if r.Folded && r.BodyCount > 0 {
 		b.WriteString(fmt.Sprintf("  (%d)", r.BodyCount))
 	}
+	if r.Node.IsHead {
+		b.WriteString(turnSize(r.Node))
+	}
 	line := fit(b.String(), width)
 	key := styleFor(r.Node, currentTip)
 	if r.Node.Compacted && key != StyleBroken && key != StyleCurrent {
@@ -169,10 +185,14 @@ func fit(line string, width int) string {
 }
 
 func groupText(r Row) string {
-	if r.GroupTurns == 1 {
-		return "⋮ compacted by Claude Code · 1 turn"
+	text := "⋮ compacted by Claude Code · 1 turn"
+	if r.GroupTurns != 1 {
+		text = fmt.Sprintf("⋮ compacted by Claude Code · %d turns", r.GroupTurns)
 	}
-	return fmt.Sprintf("⋮ compacted by Claude Code · %d turns", r.GroupTurns)
+	if r.GroupTokens > 0 {
+		text += " · ~" + humanTokens(r.GroupTokens)
+	}
+	return text
 }
 
 // groupLine is the open group's heading, drawn above its first turn's row
