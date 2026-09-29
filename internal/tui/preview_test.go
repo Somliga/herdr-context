@@ -90,3 +90,52 @@ func TestHeavyJumpSkipsTheCompactedStretch(t *testing.T) {
 		}
 	}
 }
+
+// ] mid-move would drop the cursor anywhere, even into the section in hand.
+func TestHeavyJumpIsSwallowedMidMove(t *testing.T) {
+	u := cursorTo(t, heavyWorld(t).open(sidT), sidT, "t1-p")
+	u = drive(t, u, key('m'))
+	was := u.m.Cursor
+	u = drive(t, u, key(']'))
+	if u.m.Cursor != was || strings.HasPrefix(u.status, "heavy") {
+		t.Fatalf("] moved the cursor mid-move (status %q)", u.status)
+	}
+}
+
+// A range into the compacted stretch will be refused: the preview says so
+// instead of counting the one row that stands for many turns.
+func TestTheRangePreviewSaysARangeBeforeACompactCannotBeEdited(t *testing.T) {
+	w := newWorld(t)
+	w.fixture(sidT, "compacted.jsonl")
+	u := drive(t, w.open(sidT), tea.WindowSizeMsg{Width: 110, Height: 40})
+	u = drive(t, u, down, key('s'), tea.KeyMsg{Type: tea.KeyUp}) // u3 end, the group row start
+	v := u.View()
+	if !strings.Contains(v, "before a /compact") || strings.Contains(v, "drop   →") {
+		t.Fatalf("the preview counts a range it cannot edit:\n%s", v)
+	}
+}
+
+// A range must stay in one session; while it strays, no preview adds up two.
+func TestTheRangePreviewNeedsOneSession(t *testing.T) {
+	w := heavyWorld(t)
+	b := w.branch(sidT, sidT, "t2-p")
+	u := drive(t, allOf(w.open(sidT)), tea.WindowSizeMsg{Width: 110, Height: 60})
+	u = cursorTo(t, u, sidT, "t4-p")
+	u = drive(t, u, key('s'))
+	u = cursorTo(t, u, b, rowIDOf(t, u, b))
+	if v := u.View(); !strings.Contains(v, "one session") || strings.Contains(v, "drop   →") {
+		t.Fatalf("a range across two sessions is previewed:\n%s", v)
+	}
+}
+
+// rowIDOf is the id of sid's first row on screen.
+func rowIDOf(t *testing.T, u uiModel, sid string) string {
+	t.Helper()
+	for _, r := range u.m.Rows() {
+		if r.Node.SessionID == sid {
+			return r.Node.Node.ID
+		}
+	}
+	t.Fatalf("no row of %s", sid)
+	return ""
+}

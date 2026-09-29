@@ -951,7 +951,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				u.m.Unfold()
 				u.offHand()
 				return u, nil
-			case "s", "p", "b", "m", "u", "U", "c":
+			case "s", "p", "b", "m", "u", "U", "c", "]", "[":
 				return u, nil
 			}
 		}
@@ -1199,6 +1199,7 @@ func (u uiModel) View() string {
 	// The sidebar is sidebarRows tall; a shorter rows budget would be padded
 	// up to it, pushing the counter, footer and status off screen (§4).
 	showSidebar := u.width >= sidebarMin && !u.sidebarOff && height >= sidebarRows
+	rs := u.rangeStats() // the range preview, when a range is selected
 	rows, start, total := u.m.Window(height)
 	// A bar takes 2 columns of its own, on top of the marker's 2, so the row
 	// text is narrowed to keep the whole line within rowsWidth. rowsWidth is
@@ -1282,7 +1283,7 @@ func (u uiModel) View() string {
 		}
 		side := sidebarLines(bd, tok, est)
 		preview := false
-		if rs := u.rangeStats(); rs.known {
+		if rs.known {
 			side, preview = rangeLines(rs), true
 		}
 		var sb strings.Builder
@@ -1322,7 +1323,7 @@ func (u uiModel) View() string {
 	}
 	// A pane too narrow for the sidebar gets its range preview on the status
 	// line, in place of the range hint the footer already repeats.
-	if rs := u.rangeStats(); rs.known && !showSidebar && (u.status == "" || u.status == rangeHint) {
+	if rs.known && !showSidebar && (u.status == "" || u.status == rangeHint) {
 		b.WriteString(rangeLine(rs) + "\n")
 	} else if u.status != "" {
 		b.WriteString(u.status + "\n")

@@ -74,6 +74,9 @@ func (u *uiModel) jumpHeavy(step int) {
 type rangeStats struct {
 	turns, size, total   int
 	est, totalEst, known bool
+	// blocked, when set, is why the range cannot be edited as it stands —
+	// the preview says that instead of adding it up.
+	blocked [2]string
 }
 
 func (u uiModel) rangeStats() rangeStats {
@@ -86,6 +89,12 @@ func (u uiModel) rangeStats() rangeStats {
 	for _, r := range u.m.Rows() {
 		if !r.InRange {
 			continue
+		}
+		switch {
+		case r.Node.SessionID != from.SessionID:
+			rs.blocked = [2]string{"crosses sessions:", "keep it in one session"}
+		case r.Node.Compacted:
+			rs.blocked = [2]string{"before a /compact:", "already summarised"}
 		}
 		// A range may start on a body row; its turn counts whole (Widen).
 		h := r.Node
@@ -135,6 +144,9 @@ func (rs rangeStats) after(add int) int {
 // and the context after a drop or a squash. Without the line's number only
 // the range's own size is known.
 func rangeLines(rs rangeStats) []string {
+	if rs.blocked[0] != "" {
+		return []string{"range", "  " + rs.blocked[0], "  " + rs.blocked[1]}
+	}
 	lines := []string{"range  " + turnsWord(rs.turns) + " · " + sized(rs.size, rs.est)}
 	if rs.total == 0 {
 		return lines
@@ -149,6 +161,9 @@ func rangeLines(rs rangeStats) []string {
 
 // rangeLine is rangeLines on one row, for a pane too narrow for the sidebar.
 func rangeLine(rs rangeStats) string {
+	if rs.blocked[0] != "" {
+		return "range " + rs.blocked[0] + " " + rs.blocked[1]
+	}
 	s := "range " + turnsWord(rs.turns) + " · " + sized(rs.size, rs.est)
 	if rs.total == 0 {
 		return s
