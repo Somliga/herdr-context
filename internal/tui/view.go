@@ -1239,6 +1239,13 @@ func (u uiModel) View() string {
 	}
 	rowsBlock := strings.TrimSuffix(rb.String(), "\n")
 	if showSidebar {
+		// Pad every line to exactly rowsWidth display columns (ANSI colour
+		// codes do not count) so the "│" separator sits at a fixed column —
+		// u.width-sidebarWidth-1, flush with the pane's right edge —
+		// regardless of which row happens to be widest on screen. Without
+		// this, JoinHorizontal pads only to the widest VISIBLE row, and the
+		// sidebar drifts sideways on every fold or scroll.
+		rowsBlock = lipgloss.NewStyle().Width(rowsWidth).Render(rowsBlock)
 		n := u.currentNode()
 		var bd adapter.Breakdown
 		var tok int

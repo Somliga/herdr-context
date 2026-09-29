@@ -1304,20 +1304,14 @@ func rowLines(t *testing.T, u uiModel) (lines []string, cursor int) {
 	t.Helper()
 	cursor = -1
 	viewLines := strings.Split(u.View(), "\n")
-	// lipgloss.JoinHorizontal pads every row line to a common width before
-	// the sidebar's "│" separator, so when it is drawn it sits at the same
-	// column on every line. That column is found once, from the first row
-	// (always a session id, never arbitrary content), and used as a fixed
-	// cut point — not searched for per line — so a row's own title
-	// containing "│" elsewhere cannot be mistaken for the separator.
+	// The rows block is padded to exactly rowsWidth before the sidebar's
+	// "│" separator is joined on, so when it is shown it sits at that fixed
+	// column on every line — not wherever a line happens to be widest, and
+	// not searched for, so a row's own title containing "│" elsewhere
+	// cannot be mistaken for the separator.
 	sepAt := -1
-	if len(viewLines) > 0 {
-		for i, r := range []rune(viewLines[0]) {
-			if r == '│' {
-				sepAt = i
-				break
-			}
-		}
+	if u.width >= sidebarMin {
+		sepAt = u.width - sidebarWidth - 1
 	}
 	for i, l := range viewLines {
 		if l == "" {
@@ -2089,6 +2083,59 @@ func TestScenarioTheSidebarShowsAtWidth110(t *testing.T) {
 	v = u.View()
 	if !strings.Contains(v, "│") || !strings.Contains(v, "thinking") {
 		t.Fatalf("a second c did not bring the sidebar back:\n%s", v)
+	}
+}
+
+// sidebarColumn is the display column (ANSI codes not counted, via
+// lipgloss.Width) of the sidebar's "│" separator, asserting it is the same
+// on every row line that has one. Fails the test if the column disagrees
+// across lines, or if no "│" is found at all.
+func sidebarColumn(t *testing.T, view string) int {
+	t.Helper()
+	col := -1
+	for _, l := range strings.Split(view, "\n") {
+		i := strings.IndexRune(l, '│')
+		if i < 0 {
+			continue
+		}
+		c := lipgloss.Width(l[:i])
+		if col == -1 {
+			col = c
+		} else if c != col {
+			t.Fatalf("│ at column %d, want %d (an earlier line disagrees): %q", c, col, l)
+		}
+	}
+	if col == -1 {
+		t.Fatalf("no │ separator found:\n%s", view)
+	}
+	return col
+}
+
+// The sidebar's separator sits at a fixed column — u.width-sidebarWidth-1,
+// flush with the pane's right edge — not wherever a row happens to be
+// widest on screen. Scrolling or folding changes which rows are visible,
+// and therefore which one is widest, but must not move the separator.
+func TestScenarioTheSidebarColumnIsFixedAcrossFoldsAndScrolls(t *testing.T) {
+	w := newWorld(t)
+	w.trunk(sidT, "t1", "t2", "t3", "t4", "t5")
+
+	u := drive(t, allOf(w.open(sidT)), tea.WindowSizeMsg{Width: 110, Height: 40})
+	want := 110 - sidebarWidth - 1
+	if got := sidebarColumn(t, u.View()); got != want {
+		t.Fatalf("│ at column %d, want %d:\n%s", got, want, u.View())
+	}
+	// Scrolling changes which rows are on screen, and so which is widest.
+	for i := 0; i < 4; i++ {
+		u = drive(t, u, down)
+		if got := sidebarColumn(t, u.View()); got != want {
+			t.Fatalf("│ moved to column %d after scrolling, want %d:\n%s", got, want, u.View())
+		}
+	}
+	// Folding narrows the widest VISIBLE row without moving the pane's edge.
+	u.m.Cursor = 0
+	u = drive(t, u, key('h'))
+	if got := sidebarColumn(t, u.View()); got != want {
+		t.Fatalf("│ moved to column %d after folding, want %d:\n%s", got, want, u.View())
 	}
 }
 
