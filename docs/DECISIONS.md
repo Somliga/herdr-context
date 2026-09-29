@@ -137,6 +137,16 @@ obvious from it.
 
 ## Context sizes and the sidebar
 
+- **`]`/`[` step through the 10 largest turns of the session you are in,
+  in size order,** not a threshold (a share or a fixed size fits one session
+  length and not another). Compacted turns are skipped: out of the context.
+  The position resets on every rebuild. The footer lists the keys only in a
+  110+ pane; the 80-column footer is full.
+- **The range preview needs no adapter change:** it sums the range's turn
+  sizes. The squash figure assumes a ~1k summary (`summaryGuess`); in a narrow
+  pane it replaces the range hint on the status line, which the footer
+  already repeats.
+
 - **Thinking has no bytes of its own.** A thinking block's bytes are
   almost all signature; its share is recovered as `output_tokens -
   visible_bytes/4` per assistant message id (grouped by id, not uuid — a

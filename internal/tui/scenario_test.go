@@ -1846,27 +1846,7 @@ func TestScenarioFoldedTurnsShowTheirSizes(t *testing.T) {
 	w := newWorld(t)
 	w.durations = true
 	w.trunk(sidT, "t1", "t2", "t3")
-	path := w.path(sidT)
-	es, _, err := claude.ParseFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	usage := map[string]int{"t1-r": 5000, "t2-r": 40000, "t3-r": 90000}
-	var out []byte
-	for _, e := range es {
-		if n, ok := usage[e.UUID()]; ok {
-			e.Raw["message"].(map[string]any)["usage"] = map[string]any{
-				"input_tokens": 0, "cache_read_input_tokens": n, "cache_creation_input_tokens": 0, "output_tokens": 5}
-		}
-		b, err := claude.Marshal(e)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out = append(append(out, b...), '\n')
-	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	w.withUsage(sidT, map[string]int{"t1-r": 5000, "t2-r": 40000, "t3-r": 90000})
 
 	u := w.open(sidT)
 	rows := asShown(u)
@@ -2287,5 +2267,31 @@ func TestScenarioOverlongRowsAreCutNotWrappedBesideTheSidebar(t *testing.T) {
 	}
 	if rows < sidebarRows {
 		t.Fatalf("only %d row lines", rows)
+	}
+}
+
+// withUsage gives the named replies of sid real-shaped usage: ctx read from
+// the cache, 5 output tokens.
+func (w *world) withUsage(sid string, ctx map[string]int) {
+	w.t.Helper()
+	path := w.path(sid)
+	es, _, err := claude.ParseFile(path)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	var out []byte
+	for _, e := range es {
+		if n, ok := ctx[e.UUID()]; ok {
+			e.Raw["message"].(map[string]any)["usage"] = map[string]any{
+				"input_tokens": 0, "cache_read_input_tokens": n, "cache_creation_input_tokens": 0, "output_tokens": 5}
+		}
+		b, err := claude.Marshal(e)
+		if err != nil {
+			w.t.Fatal(err)
+		}
+		out = append(append(out, b...), '\n')
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		w.t.Fatal(err)
 	}
 }

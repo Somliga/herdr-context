@@ -48,6 +48,7 @@ go build -o bin/herdr-tree.exe ./cmd/herdr-tree
 | a | Scope: this session's family ↔ all sessions |
 | f | Filter: all entries ↔ only what a person typed |
 | c | Hide / show the context sidebar (on by default; panes 110+ columns wide) |
+| ] / [ | Jump to the next / previous of the session's 10 largest turns, largest first (wraps) |
 | esc | Cancel the range, move or dialog in progress; otherwise close (`q` also closes) |
 
 The footer always shows what the keys do right now; while a range or a move is
@@ -92,6 +93,11 @@ in progress it changes to say so.
   number, then a bar per type (thinking, tool calls, tool results, replies,
   typed, injected). Hidden in every full-screen view (confirm, review,
   summarising, a menu, the picker, labelling).
+- **Range preview.** While a range is selected (`s`), the sidebar shows the
+  range instead: its turns and size, its share of the line, and the context
+  after a drop or a squash (`squash → ~55k`, assuming a ~1k summary; the
+  review shows the real estimate). A narrow pane shows the same on the status
+  line.
 
 ## Squash
 

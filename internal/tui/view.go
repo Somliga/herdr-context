@@ -377,6 +377,7 @@ type uiModel struct {
 	scopeAll bool         // false: just the current session's tree
 
 	sidebarOff bool // true: `c` hid the context sidebar
+	heavyAt    int  // 1-based position of ] and [ in heavyTurns; 0 before the first jump
 }
 
 // currentNode finds the node for the session the sidebar tracks: the current
@@ -406,6 +407,7 @@ func (u uiModel) currentNode() *tree.Node {
 // exists so toggling scope does not lose your place.
 func (u *uiModel) rebuild() {
 	was := u.m.Selected()
+	u.heavyAt = 0 // sizes and turns may have changed
 	// Editing the session you are in keeps showing its line (§6.3). Only the
 	// view follows the replacement: messages still go to u.current's agent.
 	// A replacement not on disk is not on screen either: keep the current.
@@ -984,7 +986,7 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// The END first: "summarise what I just did" is how the
 				// thought arrives, and the cursor is already there.
 				u.m.BeginRange()
-				u.status = "range end fixed — move to its start, then s or ⏎ (esc cancels)"
+				u.status = rangeHint
 				return u, nil
 			}
 			return u.openRangeMenu()
@@ -1085,6 +1087,16 @@ func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return u, nil
 			}
 			u.sidebarOff = !u.sidebarOff
+		case "]", "[":
+			// Swallowed mid-range: the range follows the cursor.
+			if u.m.RangeEnd != nil {
+				return u, nil
+			}
+			step := 1
+			if msg.String() == "[" {
+				step = -1
+			}
+			u.jumpHeavy(step)
 		case "f":
 			u.m.CycleFilter()
 		case "L":
@@ -1167,7 +1179,7 @@ func (u uiModel) View() string {
 	// room to spare once the sidebar itself fits (§4).
 	footerLine2 := fmt.Sprintf("L label  a scope:%s  f filter:%s  u undo  U redo  esc close", scope, u.m.Filter)
 	if u.width >= sidebarMin {
-		footerLine2 += "  c context"
+		footerLine2 += "  c context  [ ] heavy"
 	}
 	footer := "↑↓ move  ←→ fold  ⏎ continue here  b branch  s select  m move  p place a summary\n" + footerLine2 + "\n"
 	if u.moving != nil {
@@ -1268,25 +1280,30 @@ func (u uiModel) View() string {
 		if n != nil {
 			bd, tok, est = n.SessionBreakdown, n.SessionTokens, n.TokensEstimated
 		}
+		side := sidebarLines(bd, tok, est)
+		preview := false
+		if rs := u.rangeStats(); rs.known {
+			side, preview = rangeLines(rs), true
+		}
 		var sb strings.Builder
-		for i, l := range sidebarLines(bd, tok, est) {
+		for i, l := range side {
 			if i > 0 {
 				sb.WriteString("\n")
 			}
 			l = padCells(l, sidebarWidth)
-			if i == 1 { // the "thinking" bar, the first after the header
+			if i == 1 && !preview { // the "thinking" bar, the first after the header
 				sb.WriteString(render(StyleClaude, l))
 			} else {
 				sb.WriteString(render(StyleMuted, l))
 			}
 		}
-		side := sb.String()
+		sideBlock := sb.String()
 		h := strings.Count(rowsBlock, "\n") + 1
-		if sh := strings.Count(side, "\n") + 1; sh > h {
+		if sh := strings.Count(sideBlock, "\n") + 1; sh > h {
 			h = sh
 		}
 		sep := render(StyleTool, strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
-		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, rowsBlock, sep, side))
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, rowsBlock, sep, sideBlock))
 	} else {
 		b.WriteString(rowsBlock)
 	}
@@ -1303,7 +1320,11 @@ func (u uiModel) View() string {
 			b.WriteString("this call is already billed; ctrl+c again to leave it running\n")
 		}
 	}
-	if u.status != "" {
+	// A pane too narrow for the sidebar gets its range preview on the status
+	// line, in place of the range hint the footer already repeats.
+	if rs := u.rangeStats(); rs.known && !showSidebar && (u.status == "" || u.status == rangeHint) {
+		b.WriteString(rangeLine(rs) + "\n")
+	} else if u.status != "" {
 		b.WriteString(u.status + "\n")
 	}
 	return b.String()
