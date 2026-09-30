@@ -1,21 +1,75 @@
+<div align="center">
+
 # herdr-tree
 
-A Herdr plugin that shows a repo's Claude Code conversations as one tree —
-every session, every branch, every turn — and lets you edit their context:
-branch from any turn, squash a stretch into a summary, drop it, move a turn to
-another line, or place a stored summary anywhere.
+**Your Claude Code conversations as one tree — and the context, editable**
 
-## Install
+<a href="https://go.dev"><img src="https://img.shields.io/badge/go-%E2%89%A5%201.27-00ADD8?style=flat-square" alt="Go 1.27+"></a>
+<a href="https://herdr.dev"><img src="https://img.shields.io/badge/herdr-%E2%89%A5%200.9.0-D97757?style=flat-square" alt="Herdr 0.9.0+"></a>
+<img src="https://img.shields.io/badge/platforms-linux%20%C2%B7%20macos-555?style=flat-square" alt="Linux · macOS">
 
-```bash
+</div>
+
+---
+
+## What it is
+
+A [Herdr](https://herdr.dev) plugin that draws every Claude Code session in a
+repo as one tree: each session, each branch, each turn. From that tree you can
+edit a session's context: branch from any turn, squash a stretch into a
+summary, drop it, move a turn to another line, and undo any of it. It never
+changes a transcript. Every edit writes a new session and keeps the old one.
+
+## Why
+
+A long Claude Code session fills its context with old detours and huge tool
+outputs until autocompact decides for you what to forget. `/compact` and
+`/rewind` are all-or-nothing. herdr-tree shows where the context goes, turn by
+turn and by type, and lets you trim exactly the part that no longer earns its
+place, then continue from the result in any pane.
+
+## What you get
+
+```
+  ▎ 1a2b3c4d · 84k                                          │context  84k
+  ▎ ⋮ compacted by Claude Code · 12 turns · ~40k            │thinking     ▮▮▮▯▯▯▯▯ 32%
+  ▎ ▸ user: add the retry budget  (14)  31k                 │tool calls   ▮▮▯▯▯▯▯▯ 26%
+  ▎   ↳ 5e6f7a8b · 12k                                      │tool results ▮▮▯▯▯▯▯▯ 25%
+  ▎     ▸ user: try it with a token bucket instead  (6)  9k │replies      ▮▯▯▯▯▯▯▯  7%
+  ▎ ⤶ squashed: dispatcher refactor, tests green  (1)  2k   │typed        ▮▯▯▯▯▯▯▯  7%
+ >▎ ▸ user: now wire it into the CLI  (9)  18k  ● current   │injected     ▯▯▯▯▯▯▯▯  3%
+```
+
+- **The whole family at a glance.** Branches are indented under the turn they
+  left. A `▎` bar marks your path. Each session header carries its context
+  size.
+- **Where the context goes.** Every turn shows its size, and a sidebar splits
+  the session into thinking, tool calls, tool results, replies, typed text and
+  injected text. `]` and `[` jump through the ten heaviest turns.
+- **Edits that fit the tree.**
+  - **squash** replaces a stretch with a summary, which you review before it
+    lands.
+  - **drop** cuts a stretch.
+  - **move** takes a turn to another place or another line.
+  - **place** puts a stored summary anywhere.
+  - `u` / `U` undo and redo each line's edits.
+  - While you select a range, the sidebar previews what an edit would leave.
+- **Claude Code's own compaction, shown honestly.** The stretch a `/compact`
+  summarised folds into one row, so the tree shows what the agent actually
+  reads.
+- **Safe by construction.**
+  - Source transcripts are never modified and sessions are never deleted.
+  - Edits are refused while the session's agent is busy.
+  - No edit opens a pane: ⏎ is what moves you.
+
+## Quick start
+
+```sh
 herdr plugin install Somliga/herdr-tree
 ```
 
-Herdr builds the plugin on your machine during the install, so you need
-**Go 1.27 or later** on your `PATH` (Herdr reports a failed build but does
-not install Go for you). Linux and macOS. To update, run the install again.
-
-Then bind a key in `~/.config/herdr/config.toml`:
+Herdr builds the plugin during the install, so **Go 1.27 or later** must be on
+your `PATH`. Then bind a key in `~/.config/herdr/config.toml`:
 
 ```toml
 [[keys.command]]
@@ -24,154 +78,62 @@ type = "plugin_action"
 command = "herdr-tree.open"
 ```
 
-**Developing it:** link a checkout instead, and rebuild after changes —
-Herdr runs `./bin/herdr-tree.exe` from the linked directory:
+Press `prefix+t` in a pane inside a repository to open the tree. To update,
+run the install again.
 
-```bash
-herdr plugin link /path/to/herdr-tree
-go build -o bin/herdr-tree.exe ./cmd/herdr-tree
+> [!NOTE]
+> Requires Herdr 0.9.0+ and Claude Code 2.1.x. Linux and macOS. The
+> transcript format is undocumented: herdr-tree refuses to write rather than
+> guess when it meets another version.
+
+### Or hand it to an agent
+
+```text
+Install the herdr-tree plugin for Herdr on this machine.
+
+1. Check that `go version` reports 1.27 or newer; stop and tell me if not.
+2. herdr plugin install Somliga/herdr-tree
+3. Add this key binding to ~/.config/herdr/config.toml, unless prefix+t is
+   already bound (then ask me for another key):
+
+   [[keys.command]]
+   key = "prefix+t"
+   type = "plugin_action"
+   command = "herdr-tree.open"
+
+4. Check it took: `herdr plugin list` shows herdr-tree as enabled.
+
+Do NOT run `herdr server stop` or kill the Herdr process: that ends every
+program in every pane, including whatever is running you.
 ```
 
 ## Keys
 
 | Key | Action |
-|-----|--------|
-| ↑ ↓ | Move |
-| ← → | Fold / unfold |
-| ⏎ | **Continue here.** On a line's tip: resume it (or hand over, below). On an earlier turn: confirm, then a new session continuing from the end of that turn opens in a pane |
-| b | **Branch** from the end of this turn. Opens nothing, asks nothing; the cursor lands on the new branch |
-| s | **Select** a range: fixes its end here; move to its start and press `s` or ⏎ to open `squash · drop` |
-| m | **Move** this turn (one section): ⏎ puts it after the turn under the cursor, esc puts it back |
-| p | **Place a summary** at this turn: pick a stored summary, then merge here / branch here |
-| u / U | **Undo / redo** this line's last edit (squash, drop, move, merge). As deep as the line's history goes; a move across two lines undoes on both |
-| L | Label this turn (empty clears) |
-| a | Scope: this session's family ↔ all sessions |
-| f | Filter: all entries ↔ only what a person typed |
-| c | Hide / show the context sidebar (on by default; panes 110+ columns wide) |
-| ] / [ | Jump to the next / previous of the session's 10 largest turns, largest first (wraps) |
-| esc | Cancel the range, move or dialog in progress; otherwise close (`q` also closes) |
+| --- | --- |
+| `↑` `↓` · `←` `→` | Move · fold / unfold |
+| `⏎` | Continue here: resume the line, or start a new session from this turn |
+| `b` | Branch from this turn |
+| `s` | Select a range, then `squash · drop` |
+| `m` | Move this turn |
+| `p` | Place a stored summary here |
+| `u` / `U` | Undo / redo this line's last edit |
+| `]` / `[` | Next / previous heavy turn |
+| `c` · `a` · `f` | Sidebar · scope (family / all) · filter (all / typed only) |
+| `L` | Label this turn |
+| `esc` | Cancel, or close |
 
-The footer always shows what the keys do right now; while a range or a move is
-in progress it changes to say so.
-
-## What you see
-
-- **Session headers.** Each session's first row has a header line above it:
-  `<id>` for a root line, `↳ <id>` for a branch, then the line's context size
-  (`↳ 1a2b3c4d · 84k`): what its last reply read. A freshly edited line shows
-  the edit's estimate (`· ~31k`) until its next reply. A branch whose turn was
-  squashed or dropped away shows as a root marked `from a removed stretch`.
-- **Your path.** A cyan `▎` in the left margin marks every row on the path to
-  the session you are in. The default scope is that session's family: its root
-  line and every branch in it.
-- **Indentation means "branched here".** A branch is indented one level under
-  the turn it came from; the parent line continues at its own depth.
-- **Markers:**
-  - `⤶ squashed …` (blue) — a stretch of this line replaced by its summary.
-  - `⤶ merged from <id> …` (orange) — a summary brought in from another line.
-  - `✂ N turns dropped before/after this` (muted) — a drop.
-  - `⇢ 1 turn moved to <id>` (muted) — where a turn moved into another line
-    used to be.
-  - `⇠ moved from <id>` (muted) — the moved turn in its new line. A move
-    within one line is a reorder and leaves no marker.
-  - `⋮ compacted by Claude Code — context starts here` (terracotta, Claude's colour) — a native
-    `/compact` or autocompact. Turns above it are already Claude Code's
-    summary: not in the context, and they cannot be squashed, dropped or
-    moved (a branch from them still works).
-  - `⋮ compacted by Claude Code · N turns` (terracotta) — those turns, one folded
-    row, so the tree shows the line as the agent reads it. `→` opens it (the
-    old turns show in grey, one level in), `←` closes it. Branches off them
-    stay visible under it; ⏎ / `b` on it branch from its first turn. While it
-    is closed it is the divider, and the note above is not repeated.
-  - `● current` — the tip of the session you are in.
-- **Turn sizes.** A folded head row's turn count is followed by its context
-  size (`(2)  ~1k`), and an open turn's prompt row shows the same; an open
-  compacted group's heading shows it for the whole group.
-- **The context sidebar.** At 110+ columns a right-hand column, on by
-  default (`c` hides and shows it), for
-  the session you are in — not wherever the cursor sits: the line's context
-  number, then a bar per type (thinking, tool calls, tool results, replies,
-  typed, injected). Hidden in every full-screen view (confirm, review,
-  summarising, a menu, the picker, labelling).
-- **The cursor and a range.** The cursor's row has a background band across
-  its full width, with `>` in the margin. A range being selected has a
-  fainter band and a `┃` in the margin's second column, so it reads as one
-  block, with its text in the range colour (summary rows and broken sessions
-  keep theirs).
-- **Range preview.** While a range is selected (`s`), the sidebar shows the
-  range instead: its turns and size, its share of the line, and the context
-  after a drop or a squash (`squash → ~55k`, assuming a ~1k summary; the
-  review shows the real estimate). A narrow pane shows the same on the status
-  line.
-
-## Squash
-
-Select a range with `s`, press ⏎, choose **squash**.
-
-1. **Confirm.** The dialog names the turns (widened to whole turns) and the
-   cost: the model reads the session up to the end of the range, and that
-   whole prefix is billed.
-2. **Summarising view.** Spinner and elapsed time. The first `ctrl+c` only
-   warns that the call is already billed; a second one leaves it running and
-   closes the overlay.
-3. **Review.** The summary is shown in full, with its title above it and what
-   will happen below it, with the context estimate (`context 84k → ~31k`)
-   when the line has a number. `⏎` commits; `esc` cancels — nothing is written, and
-   the summary stays stored for `p`.
-
-On commit a new session replaces the line: the stretch becomes one
-`⤶ squashed: <title>` row. The model titles each squash itself (no extra
-call); if it doesn't, the row reads `⤶ squashed <from>..<to>`.
-
-**Drop** is the same without a summary: free, and no note is left in the
-conversation.
-
-## Move
-
-`m` picks up one section — a prompt, or a `⤶` row, with everything under it.
-To move a stretch, squash it first, then move the `⤶` row. ⏎ puts it after the
-turn under the cursor, in the same line or another one. Moved into another
-line, a `⤶ squashed` row becomes `⤶ merged from <source>`. Nothing is billed.
-A turn moved into another line gets new ids there, so its label stays behind
-and a branch that hung off it shows as `from a removed stretch`.
-
-## Place a summary (`p`)
-
-Every squash's summary is stored. `p` picks one and puts it at a turn:
-
-- **At the tip of your session, while its agent is live**, it is sent to the
-  agent as your next message. Nothing is copied.
-- **Anywhere else**, choose **merge here** (inserted after this turn,
-  everything after it kept; replaces the line) or **branch here** (a new line
-  ending at this turn plus the summary; the old line stays).
-
-## Edits never open a pane
-
-Squash, drop, move, merge and `b` only write; the tree reloads with the cursor
-on the result. ⏎ is what moves you. ⏎ on a line that replaced one still open
-in a pane asks once, opens the new line focused, and then closes the old pane
-(text typed but not sent there is lost).
-
-## Safety
-
-- Source transcripts are never modified; every edit writes a new session.
-- Sessions are never deleted. A replaced line is hidden from the tree, its
-  file kept on disk.
-- An edit is refused while the session's agent is busy (anything but idle),
-  and if the line was changed in another overlay since this one loaded.
+The footer always shows what the keys do right now.
 
 ## Cost
 
-Only summaries bill: one `claude -p` call per squash, on your normal Claude
-Code login. Branch, drop, move and merge are local file writes. The first
-message in an edited session is sent with a cold prompt cache.
+Only squash bills: one `claude -p` call per summary, on your normal Claude
+Code login, and the confirm dialog says how much it reads first. Branch,
+drop, move, merge and undo are local file writes.
 
-## Limits
+## Docs
 
-Claude Code's transcript format is undocumented. herdr-tree is verified
-against Claude Code 2.1.x and refuses to write rather than guess when it sees
-another version. Turns before a native `/compact` still show in the tree,
-and ⏎, `b` and branch here work on them: the new line carries the history
-before the compact, up to the end of that turn. Squash, drop, move and merge here on them
-are refused ("that entry is not on this session's current line"): those
-rewrite the current line, which no longer holds them.
+- [User guide](docs/GUIDE.md): every marker, the squash / move / place flows,
+  handover, safety and limits.
+- [Decisions](docs/DECISIONS.md): why it works the way it does.
+- [AGENTS.md](AGENTS.md): for coding agents working on this repo.

@@ -6,13 +6,14 @@ then the current spec. The code is the authority; the docs describe it.
 herdr-tree is a Go Bubble Tea plugin for the Herdr terminal multiplexer. It
 draws a repo's Claude Code sessions as one tree and edits their context:
 branch, squash, drop, move, and place a stored summary. The user-facing
-behaviour is in `README.md`.
+behaviour is in `docs/GUIDE.md`.
 
 ## Docs
 
 | Doc | Status |
 |-----|--------|
-| `README.md` | Current. User guide: keys, markers, squash/move/p, safety, cost. |
+| `README.md` | Current. The front page: what it is, install, keys, cost. Keep it tight. |
+| `docs/GUIDE.md` | Current. The user guide: every key, marker and flow, safety, limits. |
 | `docs/DECISIONS.md` | Current. The rulings that shape the code, and the deferred minors. |
 | `docs/superpowers/specs/2026-09-23-context-editing-design.md` | **Current binding spec** (v3), with amendments; its status block says what no longer binds. |
 | `docs/superpowers/plans/2026-09-23-context-editing.md` | Historical. The v3 plan's first nine tasks; later tasks were briefed outside it. |

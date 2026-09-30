@@ -1,0 +1,148 @@
+# herdr-tree — user guide
+
+Everything the overlay does, in detail. Install and a quick tour are in the
+[README](../README.md).
+
+## Keys
+
+| Key | Action |
+|-----|--------|
+| ↑ ↓ | Move |
+| ← → | Fold / unfold |
+| ⏎ | **Continue here.** On a line's tip: resume it (or hand over, below). On an earlier turn: confirm, then a new session continuing from the end of that turn opens in a pane |
+| b | **Branch** from the end of this turn. Opens nothing, asks nothing; the cursor lands on the new branch |
+| s | **Select** a range: fixes its end here; move to its start and press `s` or ⏎ to open `squash · drop` |
+| m | **Move** this turn (one section): ⏎ puts it after the turn under the cursor, esc puts it back |
+| p | **Place a summary** at this turn: pick a stored summary, then merge here / branch here |
+| u / U | **Undo / redo** this line's last edit (squash, drop, move, merge). As deep as the line's history goes; a move across two lines undoes on both |
+| L | Label this turn (empty clears) |
+| a | Scope: this session's family ↔ all sessions |
+| f | Filter: all entries ↔ only what a person typed |
+| c | Hide / show the context sidebar (on by default; panes 110+ columns wide) |
+| ] / [ | Jump to the next / previous of the session's 10 largest turns, largest first (wraps) |
+| esc | Cancel the range, move or dialog in progress; otherwise close (`q` also closes) |
+
+The footer always shows what the keys do right now; while a range or a move is
+in progress it changes to say so.
+
+## What you see
+
+- **Session headers.** Each session's first row has a header line above it:
+  `<id>` for a root line, `↳ <id>` for a branch, then the line's context size
+  (`↳ 1a2b3c4d · 84k`): what its last reply read. A freshly edited line shows
+  the edit's estimate (`· ~31k`) until its next reply. A branch whose turn was
+  squashed or dropped away shows as a root marked `from a removed stretch`.
+- **Your path.** A cyan `▎` in the left margin marks every row on the path to
+  the session you are in. The default scope is that session's family: its root
+  line and every branch in it.
+- **Indentation means "branched here".** A branch is indented one level under
+  the turn it came from; the parent line continues at its own depth.
+- **Markers:**
+  - `⤶ squashed …` (blue) — a stretch of this line replaced by its summary.
+  - `⤶ merged from <id> …` (orange) — a summary brought in from another line.
+  - `✂ N turns dropped before/after this` (muted) — a drop.
+  - `⇢ 1 turn moved to <id>` (muted) — where a turn moved into another line
+    used to be.
+  - `⇠ moved from <id>` (muted) — the moved turn in its new line. A move
+    within one line is a reorder and leaves no marker.
+  - `⋮ compacted by Claude Code — context starts here` (terracotta, Claude's colour) — a native
+    `/compact` or autocompact. Turns above it are already Claude Code's
+    summary: not in the context, and they cannot be squashed, dropped or
+    moved (a branch from them still works).
+  - `⋮ compacted by Claude Code · N turns` (terracotta) — those turns, one folded
+    row, so the tree shows the line as the agent reads it. `→` opens it (the
+    old turns show in grey, one level in), `←` closes it. Branches off them
+    stay visible under it; ⏎ / `b` on it branch from its first turn. While it
+    is closed it is the divider, and the note above is not repeated.
+  - `● current` — the tip of the session you are in.
+- **Turn sizes.** A folded head row's turn count is followed by its context
+  size (`(2)  ~1k`), and an open turn's prompt row shows the same; an open
+  compacted group's heading shows it for the whole group.
+- **The context sidebar.** At 110+ columns a right-hand column, on by
+  default (`c` hides and shows it), for
+  the session you are in — not wherever the cursor sits: the line's context
+  number, then a bar per type (thinking, tool calls, tool results, replies,
+  typed, injected). Hidden in every full-screen view (confirm, review,
+  summarising, a menu, the picker, labelling).
+- **The cursor and a range.** The cursor's row has a background band across
+  its full width, with `>` in the margin. A range being selected has a
+  fainter band and a `┃` in the margin's second column, so it reads as one
+  block, with its text in the range colour (summary rows and broken sessions
+  keep theirs).
+- **Range preview.** While a range is selected (`s`), the sidebar shows the
+  range instead: its turns and size, its share of the line, and the context
+  after a drop or a squash (`squash → ~55k`, assuming a ~1k summary; the
+  review shows the real estimate). A narrow pane shows the same on the status
+  line.
+
+## Squash
+
+Select a range with `s`, press ⏎, choose **squash**.
+
+1. **Confirm.** The dialog names the turns (widened to whole turns) and the
+   cost: the model reads the session up to the end of the range, and that
+   whole prefix is billed.
+2. **Summarising view.** Spinner and elapsed time. The first `ctrl+c` only
+   warns that the call is already billed; a second one leaves it running and
+   closes the overlay.
+3. **Review.** The summary is shown in full, with its title above it and what
+   will happen below it, with the context estimate (`context 84k → ~31k`)
+   when the line has a number. `⏎` commits; `esc` cancels — nothing is written, and
+   the summary stays stored for `p`.
+
+On commit a new session replaces the line: the stretch becomes one
+`⤶ squashed: <title>` row. The model titles each squash itself (no extra
+call); if it doesn't, the row reads `⤶ squashed <from>..<to>`.
+
+**Drop** is the same without a summary: free, and no note is left in the
+conversation.
+
+## Move
+
+`m` picks up one section — a prompt, or a `⤶` row, with everything under it.
+To move a stretch, squash it first, then move the `⤶` row. ⏎ puts it after the
+turn under the cursor, in the same line or another one. Moved into another
+line, a `⤶ squashed` row becomes `⤶ merged from <source>`. Nothing is billed.
+A turn moved into another line gets new ids there, so its label stays behind
+and a branch that hung off it shows as `from a removed stretch`.
+
+## Place a summary (`p`)
+
+Every squash's summary is stored. `p` picks one and puts it at a turn:
+
+- **At the tip of your session, while its agent is live**, it is sent to the
+  agent as your next message. Nothing is copied.
+- **Anywhere else**, choose **merge here** (inserted after this turn,
+  everything after it kept; replaces the line) or **branch here** (a new line
+  ending at this turn plus the summary; the old line stays).
+
+## Edits never open a pane
+
+Squash, drop, move, merge and `b` only write; the tree reloads with the cursor
+on the result. ⏎ is what moves you. ⏎ on a line that replaced one still open
+in a pane asks once, opens the new line focused, and then closes the old pane
+(text typed but not sent there is lost).
+
+## Safety
+
+- Source transcripts are never modified; every edit writes a new session.
+- Sessions are never deleted. A replaced line is hidden from the tree, its
+  file kept on disk.
+- An edit is refused while the session's agent is busy (anything but idle),
+  and if the line was changed in another overlay since this one loaded.
+
+## Cost
+
+Only summaries bill: one `claude -p` call per squash, on your normal Claude
+Code login. Branch, drop, move and merge are local file writes. The first
+message in an edited session is sent with a cold prompt cache.
+
+## Limits
+
+Claude Code's transcript format is undocumented. herdr-tree is verified
+against Claude Code 2.1.x and refuses to write rather than guess when it sees
+another version. Turns before a native `/compact` sit in the folded
+compacted row; ⏎, `b` and branch here work on them (the new line carries the
+history before the compact, up to the end of that turn). Squash, drop, move
+and merge here on them are refused ("that turn is before a /compact —
+already summarised by Claude Code, not in the context").
