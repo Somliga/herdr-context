@@ -7,6 +7,7 @@
 <a href="https://go.dev"><img src="https://img.shields.io/badge/go-%E2%89%A5%201.27-00ADD8?style=flat-square" alt="Go 1.27+"></a>
 <a href="https://herdr.dev"><img src="https://img.shields.io/badge/herdr-%E2%89%A5%200.9.0-D97757?style=flat-square" alt="Herdr 0.9.0+"></a>
 <img src="https://img.shields.io/badge/platforms-linux%20%C2%B7%20macos-555?style=flat-square" alt="Linux · macOS">
+<a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-555?style=flat-square" alt="MIT"></a>
 
 </div>
 
@@ -137,3 +138,7 @@ drop, move, merge and undo are local file writes.
   handover, safety and limits.
 - [Decisions](docs/DECISIONS.md): why it works the way it does.
 - [AGENTS.md](AGENTS.md): for coding agents working on this repo.
+
+## License
+
+[MIT](LICENSE)
