@@ -1,0 +1,151 @@
+package claude
+
+import (
+	"os"
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	"herdr-context/internal/adapter"
+	"herdr-context/internal/herdr"
+)
+
+type claudeAdapter struct{}
+
+// New returns the Claude Code adapter.
+func New() adapter.Adapter { return claudeAdapter{} }
+
+func (claudeAdapter) Name() string { return "claude" }
+
+func (claudeAdapter) Discover(repoRoot string) ([]adapter.Session, error) {
+	return Discover(repoRoot)
+}
+
+func (claudeAdapter) Current(p adapter.Pane) (string, error) { return Current(p) }
+
+// TranscriptPath is where Claude Code will look for a session started in
+// cwd. Use it for a file about to be WRITTEN. To READ an existing session,
+// use Session.Path, which is where the file was actually found — the two
+// disagree for a session that relocated into a worktree.
+func TranscriptPath(sessionID, cwd string) string {
+	return filepath.Join(ProjectsDir(), SlugFor(cwd), sessionID+".jsonl")
+}
+
+// sourcePath prefers the discovered path and falls back to reconstruction
+// for a Session built by hand.
+func sourcePath(src adapter.Session) string {
+	if src.Path != "" {
+		return src.Path
+	}
+	return TranscriptPath(src.ID, src.CWD)
+}
+
+// Preview reports what a graft at atNode would carry, without writing.
+func (claudeAdapter) Preview(src adapter.Session, atNode string) (turns, entries int, size int64, err error) {
+	es, _, err := ParseFile(sourcePath(src))
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	keep, err := Select(es, atNode)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	for _, e := range es {
+		u := e.UUID()
+		if u == "" || !keep[u] {
+			continue
+		}
+		entries++
+		if IsPrompt(e) {
+			turns++
+		}
+		if b, merr := Marshal(e); merr == nil {
+			size += int64(len(b)) + 1
+		}
+	}
+	return turns, entries, size, nil
+}
+
+func (claudeAdapter) Branch(src adapter.Session, atNode, dstCWD string) (string, error) {
+	return claudeAdapter{}.BranchSeeded(src, atNode, dstCWD, "")
+}
+
+func (claudeAdapter) BranchSeeded(src adapter.Session, atNode, dstCWD, seed string) (string, error) {
+	sid, _, err := GraftSeeded(sourcePath(src), atNode, dstCWD, seed)
+	return sid, err
+}
+
+func (claudeAdapter) Summarise(src adapter.Session, fromTurn, toTurn string) (string, error) {
+	// Deliberately NOT src.CWD. Summarise grafts a throwaway session into the
+	// project directory derived from the cwd it is handed, and Discover scans
+	// that same directory. Interrupting a summarise is allowed — ctrl+c
+	// reaches tea.Quit on purpose, because the call can take minutes — and an
+	// interrupted process never runs Summarise's deferred cleanup. Handed
+	// src.CWD, the orphan then appears in the user's own tree as a new root
+	// session. A temp dir puts it where Discover never looks and the OS
+	// sweeps it.
+	//
+	// Resuming with an unrelated cwd is proven, not assumed: v1's graft
+	// verification against Claude Code 2.1.278 resumed from a mktemp cwd, and
+	// scripts/verify-timeline.sh summarises into one.
+	tmp, err := os.MkdirTemp("", "herdr-context-summarise-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	return Summarise(sourcePath(src), fromTurn, toTurn, tmp)
+}
+
+func (claudeAdapter) Widen(src adapter.Session, fromNode, toNode string) (adapter.Span, error) {
+	return Widen(sourcePath(src), fromNode, toNode)
+}
+
+func (claudeAdapter) WidenBranch(src adapter.Session, node string) (adapter.Span, error) {
+	return WidenBranch(sourcePath(src), node)
+}
+
+func (claudeAdapter) Splice(src adapter.Session, e adapter.Edit, dstCWD string) (adapter.Spliced, error) {
+	return Splice(sourcePath(src), e, dstCWD)
+}
+
+// agentName builds a Herdr agent name for a session in a pane.
+//
+// It includes the pane because Herdr requires live agent names to be unique,
+// and a name derived from the session alone collides the moment the same
+// session is opened twice — a retry after a failure, or a session already
+// open elsewhere. Resume always creates a fresh pane, so the pane id makes
+// the name unique in practice.
+//
+// Herdr accepts [a-z][a-z0-9_-]{0,31}, so everything is lowercased, anything
+// outside that set is dropped, and the result is capped.
+func agentName(sessionID, paneID string) string {
+	keep := func(s string) string {
+		var b strings.Builder
+		for _, r := range strings.ToLower(s) {
+			if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+				b.WriteRune(r)
+			}
+		}
+		return b.String()
+	}
+	n := "tree-" + keep(strings.SplitN(sessionID, "-", 2)[0]) + "-" + keep(paneID)
+	if len(n) > 32 {
+		n = n[:32]
+	}
+	return strings.TrimRight(n, "-")
+}
+
+// Resume asks Herdr for a pane and starts Claude in it. Nothing is spawned
+// by this process.
+func (claudeAdapter) Resume(sessionID, cwd string, focus bool) error {
+	paneID, err := herdr.Split(cwd, focus)
+	if err != nil {
+		return fmt.Errorf("open pane: %w", err)
+	}
+	if err := herdr.AgentStart(agentName(sessionID, paneID), paneID, sessionID); err != nil {
+		// Say that the pane exists, so the empty pane the user is now looking
+		// at is explained rather than mysterious.
+		return fmt.Errorf("opened pane %s but could not start claude in it: %w", paneID, err)
+	}
+	return nil
+}

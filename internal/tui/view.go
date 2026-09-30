@@ -1,0 +1,1399 @@
+package tui
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+
+	"herdr-context/internal/adapter"
+	"herdr-context/internal/store"
+	"herdr-context/internal/tree"
+)
+
+func shortID(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
+}
+
+// claudeSummaryPrefix and claudeCompactionPrefix mirror claude.SummaryPrefix
+// and claude.CompactionPrefix. internal/tui must not import internal/claude,
+// so the markers are duplicated deliberately — they are three words and the
+// package boundary is worth more. A test in cmd/herdr-context, which imports
+// both, asserts the two pairs agree.
+const (
+	claudeSummaryPrefix    = "⤶ merged from"
+	claudeCompactionPrefix = "⤶ squashed"
+)
+
+// SummaryPrefix and CompactionPrefix expose those copies to cmd/herdr-context,
+// the one package that imports both this and internal/claude, so a test there
+// can assert they still agree. They are aliases rather than the definitions
+// because the markers belong to the transcript format, not to the view.
+const (
+	SummaryPrefix    = claudeSummaryPrefix
+	CompactionPrefix = claudeCompactionPrefix
+)
+
+// title reduces text to one line of at most max runes. A summary is several
+// paragraphs; anything that becomes a row label has to be one line or it
+// breaks the tree it is drawn in.
+func title(text string, max int) string {
+	var line string
+	for _, l := range strings.Split(text, "\n") {
+		if strings.TrimSpace(l) != "" {
+			line = strings.TrimSpace(l)
+			break
+		}
+	}
+	r := []rune(line)
+	if len(r) <= max {
+		return line
+	}
+	if max < 1 {
+		return ""
+	}
+	return string(r[:max-1]) + "…"
+}
+
+// humanTokens formats a context number for the header and squash review
+// (§3.2): <1k below 1000, "12k" rounded to the nearest thousand below 1M,
+// "1.2M" at or above it.
+func humanTokens(n int) string {
+	switch {
+	case n < 1000:
+		return "<1k"
+	case n < 999_500:
+		return fmt.Sprintf("%dk", (n+500)/1000)
+	default:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+}
+
+// turnSize is a head node's turn context shown at the end of its row (§5):
+// its TurnTokens formatted, "~" prefixed when estimated, "" when there is
+// none.
+func turnSize(n *tree.Node) string {
+	if n.Node.TurnTokens == 0 {
+		return ""
+	}
+	if n.Node.TurnEstimated {
+		return "  ~" + humanTokens(n.Node.TurnTokens)
+	}
+	return "  " + humanTokens(n.Node.TurnTokens)
+}
+
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%d KB", n/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
+}
+
+// renderRow draws one line. Rendering is deliberately plain text so it can
+// be asserted in tests; View applies the StyleKey it returns.
+func renderRow(r Row, selected bool, currentSession string, width int) (string, StyleKey) {
+	var b strings.Builder
+	b.WriteString(strings.Repeat("  ", r.Depth))
+
+	if r.Group && r.GroupClosed {
+		b.WriteString(groupText(r))
+		if r.InRange {
+			return fit(b.String(), width), StyleRange
+		}
+		return fit(b.String(), width), StyleClaude
+	}
+	if r.Node.Broken {
+		b.WriteString("⚠ ")
+	}
+	if r.BodyCount > 0 && r.Folded {
+		b.WriteString("▸ ")
+	}
+
+	if r.Node.Label != "" {
+		b.WriteString("★ " + r.Node.Label + "  ")
+	}
+	switch r.Node.Node.Kind {
+	case adapter.KindAssistant:
+		b.WriteString("assistant: ")
+	case adapter.KindToolCall:
+		// the label already carries its own brackets
+	case adapter.KindSummaryImport, adapter.KindSummaryCompaction:
+		// No prefix here: the title IS the seed's first line, which begins
+		// with ⤶ by construction — Classify only assigns these kinds when
+		// that prefix is present, and GraftSeeded refuses a seed without it.
+		// Prepending another produced "⤶ ⤶ merged from …".
+	default:
+		if !r.Node.Broken {
+			b.WriteString("user: ")
+		}
+	}
+	title := r.Node.Node.Title
+	if title == "" && r.Node.Broken {
+		title = "transcript unreadable — metadata only"
+	}
+	b.WriteString(title)
+
+	currentTip := r.Node.SessionID != "" && r.Node.SessionID == currentSession && r.Node.IsSessionLeaf
+	if currentTip {
+		b.WriteString("   ● current")
+	}
+	if r.Folded && r.BodyCount > 0 {
+		b.WriteString(fmt.Sprintf("  (%d)", r.BodyCount))
+	}
+	if r.Node.IsHead {
+		b.WriteString(turnSize(r.Node))
+	}
+	line := fit(b.String(), width)
+	key := styleFor(r.Node, currentTip)
+	if r.Node.Compacted && key != StyleBroken && key != StyleCurrent {
+		key = StyleMuted // an old turn inside an open group
+	}
+	// A range in progress is the thing the user is actively manipulating, so
+	// it takes the colour slot from rows whose colour is only decorative.
+	// It does NOT take it from a row whose colour is carrying something:
+	// Broken is data integrity, and the two summary colours are the only
+	// thing separating "knowledge arrived" from "this line contracted" at a
+	// glance. Those rows stay themselves; the ┃ in the margin (rowMarker)
+	// and the band (bandFor) still mark them as ranged — §6b: the glyph
+	// carries it without colour.
+	switch {
+	case !r.InRange:
+	case key == StyleBroken, key == StyleImport, key == StyleCompaction:
+	default:
+		key = StyleRange
+	}
+	return line, key
+}
+
+// Band is a row's background: none, the range's faint band, or the
+// cursor's stronger one.
+type Band int
+
+const (
+	BandNone Band = iota
+	BandRange
+	BandCursor
+)
+
+// bandFor is the background a row gets: the cursor's band wins over the
+// range's, so the cursor stays findable inside a selection.
+func bandFor(inRange, cursor bool) Band {
+	switch {
+	case cursor:
+		return BandCursor
+	case inRange:
+		return BandRange
+	}
+	return BandNone
+}
+
+// rowMarker is the row's 2-column margin, drawn cursor first: > for the
+// cursor, then ┃ for a row in the range. Fixed columns, whatever the depth.
+func rowMarker(inRange, cursor bool) (rangeMark, cursorMark string) {
+	rangeMark, cursorMark = " ", " "
+	if inRange {
+		rangeMark = "┃"
+	}
+	if cursor {
+		cursorMark = ">"
+	}
+	return rangeMark, cursorMark
+}
+
+// padCells pads s with spaces to width display cells (ANSI codes not
+// counted).
+func padCells(s string, width int) string {
+	if n := ansi.StringWidth(s); n < width {
+		return s + strings.Repeat(" ", width-n)
+	}
+	return s
+}
+
+// fit truncates line to width columns, "…" last; width 0 is unlimited.
+func fit(line string, width int) string {
+	if width > 0 && len([]rune(line)) > width {
+		return string([]rune(line)[:width-1]) + "…"
+	}
+	return line
+}
+
+func groupText(r Row) string {
+	text := "⋮ compacted by Claude Code · 1 turn"
+	if r.GroupTurns != 1 {
+		text = fmt.Sprintf("⋮ compacted by Claude Code · %d turns", r.GroupTurns)
+	}
+	if r.GroupTokens > 0 {
+		text += " · ~" + humanTokens(r.GroupTokens)
+	}
+	return text
+}
+
+// groupLine is the open group's heading, drawn above its first turn's row
+// one level out (§3.4 amendment); "" for every other row.
+func groupLine(r Row, width int) string {
+	if !r.Group || r.GroupClosed {
+		return ""
+	}
+	return fit(strings.Repeat("  ", r.Depth-1)+groupText(r), width)
+}
+
+// headerLine is the line drawn above a session's first shown row (§5.3e):
+// "↳ <id>" for a branch, "<id>" for a root line, "" for every other row. Plain
+// text like renderRow, and truncated to width the same way.
+func headerLine(r Row, width int) string {
+	if !r.Node.IsSessionRoot {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(strings.Repeat("  ", headerDepth(r)))
+	if r.Node.Broken {
+		b.WriteString("⚠ ")
+	}
+	if r.Node.Grafted {
+		b.WriteString("↳ ")
+	}
+	b.WriteString(shortID(r.Node.SessionID))
+	if r.Node.SessionTokens > 0 {
+		b.WriteString(" · ")
+		if r.Node.TokensEstimated {
+			b.WriteString("~")
+		}
+		b.WriteString(humanTokens(r.Node.SessionTokens))
+	}
+	if r.Node.FromRemoved {
+		b.WriteString("  from a removed stretch")
+	}
+	return fit(b.String(), width)
+}
+
+// rowBar is the left-margin bar marking the row's place on the trunk
+// (§5.3d), in plain text so it stays assertable — View applies StyleTrunk.
+// hasCurrent is false when there is no current session (an empty trunk),
+// in which case no row gets a bar, present or blank.
+func rowBar(r Row, hasCurrent bool) string {
+	if !hasCurrent {
+		return ""
+	}
+	if r.OnTrunk {
+		return "▎ "
+	}
+	return "  "
+}
+
+// cutNote is the cut marker, drawn apart from its row so View can mute it
+// whatever the row's own style (spec §5.4). "" when the row has none.
+func cutNote(n *tree.Node) string {
+	out := ""
+	switch {
+	case n.MovedTo != "" && n.CutHere+n.CutAfter == 1:
+		out = "   ⇢ 1 turn moved to " + shortID(n.MovedTo)
+	case n.MovedTo != "" && n.CutHere+n.CutAfter > 1:
+		out = fmt.Sprintf("   ⇢ %d turns moved to %s", n.CutHere+n.CutAfter, shortID(n.MovedTo))
+	default:
+		// Both can land on one row from two drops along the replaces chain.
+		if n.CutHere > 0 {
+			out = fmt.Sprintf("   ✂ %d turns dropped before this", n.CutHere)
+		}
+		if n.CutAfter > 0 {
+			out += fmt.Sprintf("   ✂ %d turns dropped after this", n.CutAfter)
+		}
+	}
+	if n.MovedFrom != "" {
+		out += "   ⇠ moved from " + shortID(n.MovedFrom)
+	}
+	return out
+}
+
+// compactNote marks where a native /compact restarted the line: turns above
+// it are already summarised by Claude Code and cannot be edited. A folded
+// head carries its body's mark, since an autocompact lands mid-turn. A
+// closed group row is the divider itself, so the note is not repeated.
+func compactNote(r Row) string {
+	const note = "   ⋮ compacted by Claude Code — context starts here"
+	if r.GroupClosed {
+		return ""
+	}
+	if r.Node.Node.AfterCompact {
+		return note
+	}
+	if r.Folded {
+		for _, c := range r.Node.Children {
+			if c.SessionID == r.Node.SessionID && !c.IsHead && c.Node.AfterCompact {
+				return note
+			}
+		}
+	}
+	return ""
+}
+
+// confirmText is the branch confirmation, which is where the user is told
+// exactly what a graft copies and where it will open.
+func confirmText(n *tree.Node, turns, entries int, size int64, dstCWD string) string {
+	return fmt.Sprintf(
+		"Continue from:  %q\n\nThis starts a NEW session carrying %d turn(s) · %d entries · %s.\nThe original is untouched.\n\nOpens: split right, unfocused in %s\n\n[enter] continue   [esc] cancel",
+		n.Node.Title, turns, entries, humanBytes(size), dstCWD)
+}
+
+// foldBackConfirmText is confirmText's sibling for a fold-back: the same
+// graft, plus one injected turn, so the same figures.
+func foldBackConfirmText(at *tree.Node, turns, entries int, size int64) string {
+	return fmt.Sprintf(
+		"Branch at:  %q\n\nThis starts a NEW session carrying %d turn(s) · %d entries · %s, with the summary appended as its next turn.\nThe original is untouched.\n\nOpens nothing: ⏎ on the new line opens it.\n\n[enter] branch   [esc] cancel",
+		at.Node.Title, turns, entries, humanBytes(size))
+}
+
+type uiModel struct {
+	m        *Model
+	a        adapter.Adapter
+	st       *store.Store
+	repoRoot string
+	current  string
+	width    int
+	height   int
+	confirm  string
+	status   string
+	busy     string // non-empty while an adapter call is in flight
+	// abandoning is set by the first ctrl+c during a call, so the second one
+	// is a deliberate choice rather than a reflex.
+	abandoning bool
+	quitting   bool
+
+	// send delivers text to a live agent, and liveAgent names the agent
+	// running u.current. Both are injected by Run so this package keeps its
+	// boundary — and so the tip-append path, the riskiest assumption in v2,
+	// is testable without a running Herdr.
+	send      SendFunc
+	liveAgent string
+
+	live      LiveFunc
+	closePane ClosePaneFunc
+
+	// menu is "range" or "place" while one of the two menus is open.
+	menu    string
+	menuIdx int
+
+	// pending is what the confirmation dialog will run if it is accepted,
+	// captured when the dialog is raised rather than recomputed on enter.
+	pending     tea.Cmd
+	pendingBusy string
+
+	// picking is the fold-back picker: the summaries on offer, the cursor
+	// within them, and the turn the chosen one lands on.
+	picking []store.Summary
+	pickIdx int
+	pickAt  *tree.Node
+	placing store.Summary // the summary chosen in the picker, while the placement menu is open
+
+	// squash is a squash from its confirmation to its
+	// landing: summarising while busy, then the review (§2.9).
+	squash *squashing
+	ticks  int // the latest squash's clock; a tick for any other is dropped
+
+	// moving is move's picked-up section (§2.8), nil when none is in hand.
+	moving *carry
+
+	labelling *tree.Node // non-nil while typing a label
+	labelText string
+
+	roots    []*tree.Node // the whole forest
+	scopeAll bool         // false: just the current session's tree
+
+	sidebarOff bool // true: `c` hid the context sidebar
+	heavyAt    int  // 1-based position of ] and [ in heavyTurns; 0 before the first jump
+}
+
+// currentNode finds the node for the session the sidebar tracks: the current
+// session, resolved through any replacement, not the cursor (§4). nil if it
+// is not in the forest shown (a scope that excludes it, or a broken store).
+func (u uiModel) currentNode() *tree.Node {
+	target := u.current
+	if u.st != nil {
+		target = u.st.Current(u.current)
+	}
+	var find func([]*tree.Node) *tree.Node
+	find = func(nodes []*tree.Node) *tree.Node {
+		for _, n := range nodes {
+			if n.SessionID == target {
+				return n
+			}
+			if f := find(n.Children); f != nil {
+				return f
+			}
+		}
+		return nil
+	}
+	return find(u.m.Roots)
+}
+
+// rebuild reapplies the scope, keeping the selected node where it still
+// exists so toggling scope does not lose your place.
+func (u *uiModel) rebuild() {
+	was := u.m.Selected()
+	u.heavyAt = 0 // sizes and turns may have changed
+	// Editing the session you are in keeps showing its line (§6.3). Only the
+	// view follows the replacement: messages still go to u.current's agent.
+	// A replacement not on disk is not on screen either: keep the current.
+	scope := u.current
+	if u.st != nil {
+		if r := u.st.Current(u.current); ScopeTo(u.roots, r) != nil {
+			scope = r
+		}
+	}
+	roots := u.roots
+	if !u.scopeAll {
+		if scoped := ScopeTo(u.roots, scope); scoped != nil {
+			roots = scoped
+		}
+	}
+	rangeEnd, open := u.m.RangeEnd, u.m.CompactOpen
+	u.m = New(roots)
+	u.m.CompactOpen = open
+	u.m.SetTrunk(tree.Trunk(u.roots, scope))
+	// tree.Build runs once, in Run, so a scope toggle re-roots the SAME
+	// nodes — the range's end is still a live pointer and there is no reason
+	// to throw the user's in-progress selection away. If the new scope does
+	// not contain it, RangeSpan reports ok=false on its own.
+	u.m.RangeEnd = rangeEnd
+	if was == nil {
+		return
+	}
+	for i, r := range u.m.Rows() {
+		if r.Node == was {
+			u.m.Cursor = i
+			return
+		}
+	}
+}
+
+// actionDoneMsg carries the result of an adapter call back onto the update
+// loop. `quit` is set only when the action succeeded — a failure must leave
+// the overlay open, because Bubble Tea paints its final frame into the alt
+// screen and then discards it on exit, so a message shown while quitting is
+// never actually read by anyone.
+type actionDoneMsg struct {
+	status string
+	// quit and reload are set only when the action succeeded; carryCmd
+	// relies on that to drop only after a move that landed.
+	quit bool
+	// reload re-reads the sessions: an edit opens nothing, so the overlay is
+	// still up and the tree on screen still shows the old line. tip names the
+	// session whose tip the cursor moves to.
+	reload bool
+	tip    string
+	// node, if set, is the entry of tip's session the cursor lands on
+	// instead of its tip: a moved turn (§2.8).
+	node string
+	// wrote says something was written although reload is not set (the
+	// store did not save): whatever was in hand is spent.
+	wrote bool
+}
+
+// resumeCmd and branchCmd run OFF the update loop.
+//
+// herdr's `agent start` waits for the agent to become ready and is bounded at
+// 45 seconds. Doing that inside Update freezes every keystroke for the whole
+// duration with no feedback and no way to cancel, because Bubble Tea handles
+// one message at a time. As a tea.Cmd the work happens on its own goroutine
+// and the overlay keeps rendering.
+//
+// dstCWD is where a pane for this node should open. Normally the session's
+// own directory, so a worktree session reopens in its worktree. But that
+// directory can be gone — a removed worktree still shows in the tree by
+// design — and opening a pane there fails after the graft has already been
+// written. Fall back to the repo root, which exists by construction.
+func (u uiModel) dstCWD(n *tree.Node) string {
+	if n.SessionCWD != "" {
+		if fi, err := os.Stat(n.SessionCWD); err == nil && fi.IsDir() {
+			return n.SessionCWD
+		}
+	}
+	return u.repoRoot
+}
+
+func resumeCmd(a adapter.Adapter, n *tree.Node, dst string) tea.Cmd {
+	return func() tea.Msg {
+		if err := a.Resume(n.SessionID, dst, false); err != nil {
+			return actionDoneMsg{status: "could not open session: " + err.Error()}
+		}
+		return actionDoneMsg{status: "opened " + shortID(n.SessionID), quit: true}
+	}
+}
+
+// graftAndRecord grafts n's session at sp into dst, records the new
+// branch's edge and saves the store — the part branchCmd (⏎, which then opens
+// the result) and branchHereCmd (b, which does not, §2.5c) share. The branch
+// copies up to sp.End, the turn's last entry, but the edge names sp.EndNode,
+// the turn's last NODE, not n.Node.ID: tree.Build hangs the branch on that
+// node and attachPoint counts the copies up to it. End itself is usually a
+// system entry that is no node, and an edge naming it attaches nowhere. The
+// edge is recorded before either caller does anything else: the transcript
+// now exists, so the branch must survive even if what follows fails.
+func graftAndRecord(a adapter.Adapter, st *store.Store, n *tree.Node, sp adapter.Span, dst string) (sid string, err error) {
+	src := adapter.Session{ID: n.SessionID, CWD: n.SessionCWD, Path: n.SessionPath}
+	sid, err = a.Branch(src, sp.End, dst)
+	if err != nil {
+		return "", fmt.Errorf("branch failed: %w", err)
+	}
+	st.Add(sid, store.Branch{
+		GraftedFrom: store.From{SessionID: n.SessionID, Node: sp.EndNode},
+		Title:       n.Node.Title,
+		CreatedAt:   time.Now().UTC(),
+	})
+	if err := st.Save(); err != nil {
+		return sid, fmt.Errorf("branched %s, but the tree was not saved: %w", shortID(sid), err)
+	}
+	return sid, nil
+}
+
+// entrySpan is a graft at id itself: a tip, whose turn it already ends.
+func entrySpan(id string) adapter.Span { return adapter.Span{End: id, EndNode: id} }
+
+// branchCmd grafts at sp — the whole turn n belongs to, not n's own
+// entry (§2.5b): n may be a prompt row with a reply still to come, and
+// grafting at the prompt would leave it unanswered for the resumed agent to
+// answer again. Callers widen n's turn first and pass its last entry.
+func branchCmd(a adapter.Adapter, st *store.Store, n *tree.Node, sp adapter.Span, dst string) tea.Cmd {
+	return func() tea.Msg {
+		sid, err := graftAndRecord(a, st, n, sp, dst)
+		if err != nil {
+			return actionDoneMsg{status: err.Error()}
+		}
+		if err := a.Resume(sid, dst, false); err != nil {
+			return actionDoneMsg{status: "branched " + shortID(sid) + ", but it did not open: " + err.Error()}
+		}
+		return actionDoneMsg{status: "branched " + shortID(sid), quit: true}
+	}
+}
+
+// branchHereCmd is `b` (§2.5c): the same graft as branchCmd, but it opens
+// nothing and asks nothing. The reload lands the cursor on the new branch —
+// its tip, which for a branch with nothing of its own yet (sp is the
+// turn under the cursor) is also its one rendered row (§5.3b).
+func branchHereCmd(a adapter.Adapter, st *store.Store, n *tree.Node, sp adapter.Span, dst string) tea.Cmd {
+	return func() tea.Msg {
+		sid, err := graftAndRecord(a, st, n, sp, dst)
+		if err != nil {
+			return actionDoneMsg{status: err.Error()}
+		}
+		return actionDoneMsg{status: "branched " + shortID(sid) + " — ⏎ on it to open it", reload: true, tip: sid}
+	}
+}
+
+// SendFunc delivers text to a live agent. It is injected rather than called
+// directly so internal/tui keeps its package boundary — and so the tip-append
+// path, which is the riskiest assumption in v2, is testable without a running
+// Herdr. cmd/herdr-context wires it to herdr.AgentPrompt.
+type SendFunc func(agent, text string) error
+
+// parseTitle reads a squash's title line (§2.10): the summary's first line,
+// when it is non-empty, at most 80 characters, and followed by a blank line.
+// A leading "title:" (any case) and surrounding quotes, "#" or "*" are
+// stripped. ok is false when no line qualifies — the whole text is then the
+// summary, unchanged, and title/body are not meant to be used.
+func parseTitle(text string) (title, body string, ok bool) {
+	nl := strings.IndexByte(text, '\n')
+	if nl < 0 {
+		return "", text, false
+	}
+	first, rest := text[:nl], text[nl+1:]
+	if strings.TrimSpace(first) == "" || len([]rune(first)) > 80 {
+		return "", text, false
+	}
+	blank, after, found := rest, "", false
+	if i := strings.IndexByte(rest, '\n'); i >= 0 {
+		blank, after, found = rest[:i], rest[i+1:], true
+	}
+	if !found || strings.TrimSpace(blank) != "" {
+		return "", text, false
+	}
+	t := strings.TrimSpace(first)
+	if low := strings.ToLower(t); strings.HasPrefix(low, "title:") {
+		t = strings.TrimSpace(t[len("title:"):])
+	}
+	t = strings.Trim(t, `"'`)
+	t = strings.Trim(t, "#*")
+	t = strings.TrimSpace(t)
+	if t == "" {
+		return "", text, false
+	}
+	return t, after, true
+}
+
+// summaryTitle is the one-line label a fold-back's Branch.Title is built
+// from: the summary's own title line (§2.10) when it has one, its first
+// line otherwise.
+func summaryTitle(text string) string {
+	if t, _, ok := parseTitle(text); ok {
+		return title(t, 40)
+	}
+	return title(text, 40)
+}
+
+// foldBackSeed composes the injected turn's text.
+//
+// A summary of a DIFFERENT session arriving here is an import: knowledge came
+// in from a line that was abandoned. A summary of THIS session's own turns is
+// a compaction: the line contracted and nothing new arrived. The two are the
+// same operation and the same machinery — only this prefix tells them apart,
+// and the classifier and the palette read nothing else.
+// foldBackSeed marks the entry by what the fold-back DOES, not by where the
+// summary came from. §6b's two meanings are effects: blue says these turns
+// were on this line and got replaced by something shorter, orange says
+// knowledge arrived from a line that was abandoned.
+//
+// So rewinding matters. Folding a summary of this session's own turns 5..12
+// onto its LIVE tip replaces nothing — all the turns are still ahead of it —
+// and calling that a compaction renders blue over a line that did not
+// contract. Only the graft path rewinds, so only the graft path may say
+// compacted. Session identity alone cannot tell the two apart.
+func foldBackSeed(at *tree.Node, sum store.Summary, rewinding bool) string {
+	if rewinding && sum.SessionID == at.SessionID {
+		if t, body, ok := parseTitle(sum.Text); ok {
+			return claudeCompactionPrefix + ": " + t + "\n\n" + body
+		}
+		return claudeCompactionPrefix + " " + shortID(sum.FromTurn) + ".." + shortID(sum.ToTurn) + "\n\n" + sum.Text
+	}
+	if t, body, ok := parseTitle(sum.Text); ok {
+		return claudeSummaryPrefix + " " + shortID(sum.SessionID) + ": " + t + "\n\n" + body
+	}
+	return claudeSummaryPrefix + " " + shortID(sum.SessionID) + "\n\n" + sum.Text
+}
+
+// scrubbed renders an error for the status line with the seed taken out of
+// it.
+//
+// The status is the one line of this program that message content may never
+// reach, and the cause comes from outside: herdr reports its own stderr, and
+// herdr may quote back the prompt it rejected. Trusting it not to is the kind
+// of assumption that holds until the day it does not, so every line of the
+// seed is removed from the cause instead.
+func scrubbed(err error, seed string) string {
+	cause := err.Error()
+	for _, line := range strings.Split(seed, "\n") {
+		// Short lines are dropped: a blank line or a bare "⤶ squashed t1..t2"
+		// matches too much of ordinary prose to be worth cutting.
+		if line = strings.TrimSpace(line); len(line) >= 12 {
+			cause = strings.ReplaceAll(cause, line, "…")
+		}
+	}
+	return cause
+}
+
+// foldBackCmd appends a summary at a chosen turn.
+//
+// At the live session's tip the summary is simply the next message, and Herdr
+// can deliver it: no graft, no copy, no new session. Anywhere else the
+// timeline is changing shape, so it is a rewind seeded with the summary.
+//
+// A failed send does NOT fall back to grafting. The user asked to continue a
+// conversation; handing them a fork instead gives them two lines where they
+// expected one, and they will not notice until much later.
+// foldBackCmd appends at sp when it grafts (branch here, §2.5b): the
+// whole turn at belongs to, not at's own entry, so the seed never lands
+// right after an unanswered prompt. The live-tip send path ignores sp —
+// it appends live, nothing is grafted — so callers on that path may pass
+// at.Node.ID unwidened.
+func foldBackCmd(a adapter.Adapter, st *store.Store, at *tree.Node, sp adapter.Span, dst string, sum store.Summary, liveAgent string, send SendFunc) tea.Cmd {
+	return func() tea.Msg {
+		sending := at.IsSessionLeaf && liveAgent != "" && send != nil
+		seed := foldBackSeed(at, sum, !sending)
+		if sending {
+			if err := send(liveAgent, seed); err != nil {
+				return actionDoneMsg{status: "not sent to " + liveAgent + ": " + scrubbed(err, seed) + " — nothing was written"}
+			}
+			return actionDoneMsg{status: "sent to " + liveAgent, quit: true}
+		}
+		src := adapter.Session{ID: at.SessionID, CWD: at.SessionCWD, Path: at.SessionPath}
+		sid, err := a.BranchSeeded(src, sp.End, dst, seed)
+		if err != nil {
+			return actionDoneMsg{status: "branch failed: " + scrubbed(err, seed)}
+		}
+		st.Add(sid, store.Branch{
+			GraftedFrom: store.From{SessionID: at.SessionID, Node: sp.EndNode},
+			Title:       "⤶ " + summaryTitle(sum.Text),
+			CreatedAt:   time.Now().UTC(),
+		})
+		if err := st.Save(); err != nil {
+			return actionDoneMsg{status: "branched " + shortID(sid) + ", but the tree was not saved: " + err.Error()}
+		}
+		return actionDoneMsg{status: "branched " + shortID(sid) + " — ⏎ on it to open it", reload: true, tip: sid}
+	}
+}
+
+// agentFor is the target to send to when appending at n, and "" when there is
+// none.
+//
+// The two halves answer different questions. u.liveAgent, resolved by
+// cmd/herdr-context against herdr's live agent list, answers "is anything
+// holding the session the user is in, and where". This guard answers "is n
+// part of THAT session": other sessions in the forest are often live in other
+// panes, and appending at one of their turns must not be delivered into
+// whichever conversation the user happens to be sitting in.
+func (u uiModel) agentFor(n *tree.Node) string {
+	if n.SessionID != "" && n.SessionID == u.current {
+		return u.liveAgent
+	}
+	return ""
+}
+
+// stepOff repeats step until the cursor is off the section in hand, and
+// reports false, the cursor back where it was, if the rows run out first.
+func (u *uiModel) stepOff(step func()) bool {
+	was := u.m.Cursor
+	for u.moving.rows[u.m.Selected()] {
+		prev := u.m.Cursor
+		step()
+		if u.m.Cursor == prev {
+			u.m.Cursor = was
+			return false
+		}
+	}
+	return true
+}
+
+// offHand moves the cursor off the section in hand, down if it can: the
+// cursor never sits on the placeholder.
+func (u *uiModel) offHand() {
+	if !u.stepOff(u.m.Down) {
+		u.stepOff(u.m.Up)
+	}
+}
+
+func (u uiModel) Init() tea.Cmd { return nil }
+
+func (u uiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		u.width, u.height = msg.Width, msg.Height
+		if u.squash != nil && u.squash.sum != nil {
+			// A new width re-wraps the summary: keep the scroll inside it.
+			sq := *u.squash
+			sq.scroll = u.reviewLayout().scroll
+			u.squash = &sq
+		}
+	case summarisedMsg:
+		u.busy, u.abandoning = "", false
+		if u.squash != nil {
+			sq := *u.squash
+			sq.sum = &msg.sum
+			u.squash = &sq
+		}
+		return u, nil
+	case tickMsg:
+		// Only the summarising view ticks; the summary arriving stops it.
+		if msg.gen != u.ticks || u.squash == nil || u.squash.sum != nil || u.busy == "" {
+			return u, nil
+		}
+		sq := *u.squash
+		sq.now = msg.at
+		u.squash = &sq
+		return u, tick(u.ticks)
+	case actionDoneMsg:
+		u.busy = ""
+		u.abandoning = false
+		u.squash = nil
+		u.status = msg.status
+		if msg.quit {
+			u.quitting = true
+			return u, tea.Quit
+		}
+		if msg.wrote {
+			u.moving = nil // a second ⏎ would write a second copy
+		}
+		if msg.reload {
+			u.moving = nil // put down: the rows it held are about to go
+			if sessions, err := u.a.Discover(u.repoRoot); err == nil {
+				u.roots = tree.Build(sessions, u.st)
+				u.m.RangeEnd = nil
+				u.rebuild()
+				u.m.RevealTip(msg.tip)
+				if msg.node != "" {
+					u.m.Reveal(msg.tip, msg.node)
+				}
+			} else {
+				u.status += " (tree not refreshed: " + err.Error() + ")"
+			}
+		}
+		return u, nil
+	case tea.KeyMsg:
+		if u.busy != "" {
+			// An adapter call is in flight. Swallow input rather than queueing
+			// a second one, but never trap the user.
+			//
+			// The first ctrl+c does not quit. Quitting exits the process, and
+			// the watchdog that would kill the model call dies with it — the
+			// call runs to completion and is billed either way. Leaving
+			// silently makes that spend invisible, so say it once and let a
+			// second press through for anyone who wants out regardless.
+			if msg.String() == "ctrl+c" {
+				if !u.abandoning {
+					u.abandoning = true
+					return u, nil
+				}
+				u.quitting = true
+				return u, tea.Quit
+			}
+			return u, nil
+		}
+		if u.squash != nil && u.squash.sum != nil {
+			return u.reviewKey(msg)
+		}
+		if u.labelling != nil {
+			switch msg.Type {
+			case tea.KeyEnter:
+				n := u.labelling
+				// The label shown is looked up along the line's older
+				// versions, so the last one set must replace theirs (§5.3c).
+				for _, v := range u.st.Versions(n.SessionID) {
+					u.st.SetLabel(v, n.Node.ID, "")
+				}
+				u.st.SetLabel(n.SessionID, n.Node.ID, strings.TrimSpace(u.labelText))
+				n.Label = strings.TrimSpace(u.labelText)
+				if err := u.st.Save(); err != nil {
+					u.status = "label not saved: " + err.Error()
+				}
+				u.labelling, u.labelText = nil, ""
+			case tea.KeyEsc:
+				u.labelling, u.labelText = nil, ""
+			case tea.KeyBackspace:
+				if r := []rune(u.labelText); len(r) > 0 {
+					u.labelText = string(r[:len(r)-1])
+				}
+			case tea.KeyRunes, tea.KeySpace:
+				u.labelText += msg.String()
+			}
+			return u, nil
+		}
+		if u.picking != nil {
+			switch msg.String() {
+			case "up", "k":
+				if u.pickIdx > 0 {
+					u.pickIdx--
+				}
+			case "down", "j":
+				if u.pickIdx < len(u.picking)-1 {
+					u.pickIdx++
+				}
+			case "enter":
+				sum, at := u.picking[u.pickIdx], u.pickAt
+				u.picking, u.pickIdx = nil, 0
+				return u.foldAt(at, sum)
+			case "esc", "q":
+				u.picking, u.pickAt, u.pickIdx = nil, nil, 0
+			}
+			return u, nil
+		}
+		if u.menu != "" {
+			options := rangeMenu
+			if u.menu == "place" {
+				options = placeMenu
+			}
+			switch msg.String() {
+			case "up", "k":
+				if u.menuIdx > 0 {
+					u.menuIdx--
+				}
+			case "down", "j":
+				if u.menuIdx < len(options)-1 {
+					u.menuIdx++
+				}
+			case "enter":
+				which, idx := u.menu, u.menuIdx
+				u.menu, u.menuIdx = "", 0
+				if which == "range" {
+					return u.editConfirm([]string{store.KindCompacted, store.KindCut}[idx])
+				}
+				return u.placeChosen(idx)
+			case "esc", "q":
+				if u.menu == "place" {
+					u.pickAt = nil
+				}
+				u.menu, u.menuIdx = "", 0
+			}
+			return u, nil
+		}
+		if u.confirm != "" {
+			switch msg.String() {
+			case "enter":
+				cmd, busy := u.pending, u.pendingBusy
+				u.confirm, u.pending, u.pendingBusy = "", nil, ""
+				if cmd == nil {
+					return u, nil
+				}
+				u.m.CancelRange() // acted on; a summarise consumes its range
+				u.busy = busy
+				if u.squash != nil {
+					sq := *u.squash
+					sq.since = time.Now()
+					sq.now = sq.since
+					u.squash = &sq
+					u.ticks++
+					// The work first: tests run it alone and drop the tick.
+					return u, tea.Batch(cmd, tick(u.ticks))
+				}
+				return u, cmd
+			case "esc", "q":
+				// The range survives: escaping the cost dialog is how you go
+				// back and move the range's start, not how you abandon it.
+				u.confirm, u.pending, u.pendingBusy = "", nil, ""
+				u.squash = nil
+			}
+			return u, nil
+		}
+		if u.moving != nil {
+			// Moving (§2.8): ⏎ puts the section after the cursor's turn,
+			// esc puts it back, and the cursor steps over the section in
+			// hand, which is drawn as one placeholder.
+			switch msg.String() {
+			case "enter":
+				n := u.m.Selected()
+				if n == nil || n.Broken || n.Node.ID == "" {
+					return u, nil
+				}
+				return u.putDown(n)
+			case "esc":
+				u.moving, u.status = nil, "move cancelled — nothing was written"
+				return u, nil
+			case "up", "k", "down", "j":
+				step := u.m.Down
+				if s := msg.String(); s == "up" || s == "k" {
+					step = u.m.Up
+				}
+				was := u.m.Cursor
+				step()
+				if !u.stepOff(step) {
+					u.m.Cursor = was // only the section in hand that way
+				}
+				return u, nil
+			case "left", "h":
+				u.m.Fold()
+				u.offHand()
+				return u, nil
+			case "right", "l":
+				u.m.Unfold()
+				u.offHand()
+				return u, nil
+			case "s", "p", "b", "m", "u", "U", "c", "]", "[":
+				return u, nil
+			}
+		}
+		switch msg.String() {
+		case "esc":
+			// A range in progress is what esc abandons. Quitting here would
+			// take the overlay down with it, which is not what "never mind"
+			// means when you are halfway through selecting something.
+			if u.m.RangeEnd != nil {
+				u.m.CancelRange()
+				u.status = "range cancelled"
+				return u, nil
+			}
+			u.quitting = true
+			return u, tea.Quit
+		case "q", "ctrl+c":
+			u.quitting = true
+			return u, tea.Quit
+		case "up", "k":
+			u.m.Up()
+		case "down", "j":
+			u.m.Down()
+		case "left", "h":
+			u.m.Fold()
+		case "right", "l":
+			u.m.Unfold()
+		case "s":
+			if u.m.RangeEnd == nil {
+				if u.m.Selected() == nil {
+					return u, nil // nothing to range over; say nothing
+				}
+				// The END first: "summarise what I just did" is how the
+				// thought arrives, and the cursor is already there.
+				u.m.BeginRange()
+				u.status = rangeHint
+				return u, nil
+			}
+			return u.openRangeMenu()
+		case "p":
+			n := u.m.Selected()
+			if n == nil || n.Broken || n.Node.ID == "" {
+				return u, nil
+			}
+			sums := u.st.AllSummaries()
+			if len(sums) == 0 {
+				// Offered, never forced: say where a summary comes from
+				// rather than refusing the key.
+				u.status = "no summaries yet — s selects a range to squash, then p places it"
+				return u, nil
+			}
+			u.picking, u.pickIdx, u.pickAt = sums, 0, n
+		case "m":
+			if u.m.RangeEnd != nil {
+				return u, nil
+			}
+			n := u.m.Selected()
+			if n == nil || n.Broken || n.Node.ID == "" {
+				return u, nil
+			}
+			return u.pickUp(n)
+		case "b":
+			// Swallowed mid-range: s/⏎ already own the keys while a range is
+			// being fixed (§2.5c).
+			if u.m.RangeEnd != nil {
+				return u, nil
+			}
+			n := u.m.Selected()
+			if n == nil || n.Broken {
+				return u, nil
+			}
+			sp := entrySpan(n.Node.ID)
+			if !n.IsSessionLeaf {
+				// Graft after the WHOLE turn n is in (§2.5b), not at n's own
+				// entry: n may be an unanswered prompt row.
+				src := adapter.Session{ID: n.SessionID, CWD: n.SessionCWD, Path: n.SessionPath}
+				var err error
+				if sp, err = u.a.WidenBranch(src, n.Node.ID); err != nil {
+					u.status = "cannot branch from here: " + err.Error()
+					return u, nil
+				}
+			}
+			u.busy = "branching…"
+			return u, branchHereCmd(u.a, u.st, n, sp, u.dstCWD(n))
+		case "enter":
+			if u.m.RangeEnd != nil {
+				return u.openRangeMenu()
+			}
+			n := u.m.Selected()
+			if n == nil || n.Broken {
+				return u, nil
+			}
+			if n.IsSessionLeaf {
+				// Already the tip: continuing means resuming, and nothing is
+				// written.
+				return u.openTip(n)
+			}
+			src := adapter.Session{ID: n.SessionID, CWD: n.SessionCWD, Path: n.SessionPath}
+			// Graft after the WHOLE turn n is in (§2.5b), not at n's own
+			// entry: n may be an unanswered prompt row.
+			sp, err := u.a.WidenBranch(src, n.Node.ID)
+			if err != nil {
+				u.status = "cannot continue from here: " + err.Error()
+				return u, nil
+			}
+			turns, entries, size, err := u.a.Preview(src, sp.End)
+			if err != nil {
+				u.status = "cannot continue from here: " + err.Error()
+				return u, nil
+			}
+			u.confirm = confirmText(n, turns, entries, size, u.dstCWD(n))
+			u.pending, u.pendingBusy = branchCmd(u.a, u.st, n, sp, u.dstCWD(n)), "branching…"
+		case "u", "U":
+			// Swallowed mid-range, like b.
+			if u.m.RangeEnd != nil {
+				return u, nil
+			}
+			n := u.m.Selected()
+			if n == nil || n.Broken {
+				return u, nil
+			}
+			if msg.String() == "u" {
+				u.busy = "undoing…"
+				return u, undoCmd(u.st, n.SessionID, u.live)
+			}
+			u.busy = "redoing…"
+			return u, redoCmd(u.st, n.SessionID, u.live)
+		case "a":
+			u.scopeAll = !u.scopeAll
+			u.rebuild()
+		case "c":
+			// Swallowed mid-range, like u/U.
+			if u.m.RangeEnd != nil {
+				return u, nil
+			}
+			u.sidebarOff = !u.sidebarOff
+		case "]", "[":
+			// Swallowed mid-range: the range follows the cursor.
+			if u.m.RangeEnd != nil {
+				return u, nil
+			}
+			step := 1
+			if msg.String() == "[" {
+				step = -1
+			}
+			u.jumpHeavy(step)
+		case "f":
+			u.m.CycleFilter()
+		case "L":
+			n := u.m.Selected()
+			if n == nil || n.Node.ID == "" {
+				return u, nil
+			}
+			u.labelling = n
+			u.labelText = n.Label
+		}
+	}
+	return u, nil
+}
+
+// pickerView lists the summaries on offer and says, in words, which of the
+// two mechanisms the chosen one will use. The distinction is not cosmetic —
+// one continues the conversation the user is in, the other starts a second
+// line — so it is stated before the key that commits to it, not after.
+func (u uiModel) pickerView() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Place a summary at:  %q\n\n", u.pickAt.Node.Title)
+	for i, s := range u.picking {
+		marker := "  "
+		if i == u.pickIdx {
+			marker = "> "
+		}
+		kind := "from " + shortID(s.SessionID)
+		if s.SessionID == u.pickAt.SessionID {
+			kind = "compacts " + shortID(s.FromTurn) + ".." + shortID(s.ToTurn)
+		}
+		fmt.Fprintf(&b, "%s%-28s %s\n", marker, kind, title(s.Text, 48))
+	}
+	b.WriteString("\n")
+	if agent := u.agentFor(u.pickAt); agent != "" && u.pickAt.IsSessionLeaf && u.send != nil {
+		fmt.Fprintf(&b, "Sends it to %s as your next message. Nothing is copied.\n", agent)
+	} else {
+		b.WriteString("Next: merge it here, or branch here.\n")
+	}
+	b.WriteString("\n↑↓ choose   [enter] place   [esc] cancel\n")
+	return b.String()
+}
+
+func (u uiModel) View() string {
+	if u.quitting {
+		return ""
+	}
+	if u.squash != nil && u.squash.sum != nil {
+		return u.reviewView()
+	}
+	if u.squash != nil && u.busy != "" {
+		return u.summarisingView()
+	}
+	if u.labelling != nil {
+		return fmt.Sprintf("Label this turn:  %s\n\n  %q\n\n[enter] save   [esc] cancel   (empty clears)\n",
+			u.labelText, u.labelling.Node.Title)
+	}
+	if u.confirm != "" {
+		return u.confirm + "\n"
+	}
+	if u.picking != nil {
+		return u.pickerView()
+	}
+	if u.menu == "range" {
+		return menuView("Do what with this range?", rangeMenu, u.menuIdx)
+	}
+	if u.menu == "place" {
+		return menuView(fmt.Sprintf("Place the summary at:  %q", u.pickAt.Node.Title), placeMenu, u.menuIdx)
+	}
+	var b strings.Builder
+	var rb strings.Builder
+	if len(u.m.Rows()) == 0 {
+		rb.WriteString("No Claude sessions found for this directory.\n")
+	}
+	scope := "this session"
+	if u.scopeAll {
+		scope = "all sessions"
+	}
+	// Every footer fits 80 columns; the normal one takes two lines. A wide
+	// enough pane adds the sidebar toggle to the second line — there is
+	// room to spare once the sidebar itself fits (§4).
+	footerLine2 := fmt.Sprintf("L label  a scope:%s  f filter:%s  u undo  U redo  esc close", scope, u.m.Filter)
+	if u.width >= sidebarMin {
+		footerLine2 += "  c context  [ ] heavy"
+	}
+	footer := "↑↓ move  ←→ fold  ⏎ continue here  b branch  s select  m move  p place a summary\n" + footerLine2 + "\n"
+	if u.moving != nil {
+		footer = "↑↓ move to a turn  ⏎ put it after this turn  esc put it back\n"
+	} else if u.m.RangeEnd != nil {
+		// While a range is being selected, three keys change meaning. Saying
+		// so is cheaper than the user discovering that esc no longer closes.
+		footer = "↑↓ move to the range's start  s/⏎ choose what to do  esc cancel range\n"
+	}
+	height := u.height - 3 - strings.Count(footer, "\n") // blank, counter, footer, status
+	if height < 5 {
+		height = 5
+	}
+	if u.moving != nil {
+		height-- // the section in hand, drawn after the cursor's turn
+	}
+	// The sidebar is sidebarRows tall; a shorter rows budget would be padded
+	// up to it, pushing the counter, footer and status off screen (§4).
+	showSidebar := u.width >= sidebarMin && !u.sidebarOff && height >= sidebarRows
+	rs := u.rangeStats() // the range preview, when a range is selected
+	rows, start, total := u.m.Window(height)
+	// A bar takes 2 columns of its own, on top of the marker's 2, so the row
+	// text is narrowed to keep the whole line within rowsWidth. rowsWidth is
+	// u.width itself, less the sidebar and its separator when it is shown.
+	rowsWidth := u.width
+	if showSidebar {
+		rowsWidth -= sidebarWidth + 1
+	}
+	hasCurrent := len(u.m.OnTrunk) > 0
+	barWidth := 0
+	if hasCurrent {
+		barWidth = 2
+	}
+	// blockAfter is the last row of the cursor's turn: its head's body
+	// follows it until the next head or another session's row.
+	blockAfter, blockDepth := -1, 0
+	if u.moving != nil {
+		for i := u.m.Cursor - start; i >= 0 && i < len(rows); i++ {
+			if i > u.m.Cursor-start && (rows[i].Node.IsHead || rows[i].Node.SessionID != rows[i-1].Node.SessionID) {
+				break
+			}
+			blockAfter = i
+		}
+		if blockAfter >= 0 {
+			if blockDepth = rows[u.m.Cursor-start].Depth; !rows[u.m.Cursor-start].Node.IsHead && blockDepth > 0 {
+				blockDepth--
+			}
+		}
+	}
+	placeheld := false
+	for i, r := range rows {
+		cursor := start+i == u.m.Cursor
+		marker := "  "
+		if cursor {
+			marker = "> "
+		}
+		plainBar := rowBar(r, hasCurrent)
+		bar := plainBar
+		if r.OnTrunk {
+			bar = render(StyleTrunk, bar)
+		}
+		if h := headerLine(r, rowsWidth-2-barWidth); h != "" {
+			rb.WriteString("  " + bar + h + "\n")
+		}
+		if g := groupLine(r, rowsWidth-2-barWidth); g != "" {
+			rb.WriteString("  " + bar + render(StyleClaude, g) + "\n")
+		}
+		if u.moving != nil && u.moving.rows[r.Node] {
+			// The origin of the section in hand: one placeholder, however
+			// many of its rows are showing.
+			if !placeheld {
+				rb.WriteString(marker + bar + render(StyleTool, strings.Repeat("  ", r.Depth)+"⋯ 1 turn moving") + "\n")
+			}
+			placeheld = true
+		} else {
+			text, key := renderRow(r, cursor, u.current, rowsWidth-2-barWidth)
+			// The selection is a margin (┃ for the range, > for the cursor)
+			// and a background band across the whole row, padded to the
+			// rows' width so the band reads as a block. Every segment is
+			// rendered on the band: an inner reset would end it mid-line.
+			band := bandFor(r.InRange, cursor)
+			rm, cm := rowMarker(r.InRange, cursor)
+			trunk := styleNone
+			if r.OnTrunk {
+				trunk = StyleTrunk
+			}
+			notes := cutNote(r.Node)
+			cnote := compactNote(r)
+			line := renderOn(band, styleNone, cm) + renderOn(band, StyleRange, rm) + renderOn(band, trunk, plainBar) +
+				renderOn(band, key, text) + renderOn(band, StyleTool, notes) + renderOn(band, StyleClaude, cnote)
+			if band != BandNone && rowsWidth > 0 {
+				used := ansi.StringWidth(cm + rm + plainBar + text + notes + cnote)
+				if pad := rowsWidth - used; pad > 0 {
+					line += renderOn(band, styleNone, strings.Repeat(" ", pad))
+				}
+			}
+			rb.WriteString(line + "\n")
+		}
+		if i == blockAfter {
+			rb.WriteString("  " + rowBar(Row{}, hasCurrent) + render(StyleTool, strings.Repeat("  ", blockDepth)+"⇢ "+u.moving.head.Node.Title) + "\n")
+		}
+	}
+	rowsBlock := strings.TrimSuffix(rb.String(), "\n")
+	if showSidebar {
+		// Cut and pad every line to exactly rowsWidth display cells (ANSI
+		// colour codes do not count) so the "│" separator sits at a fixed
+		// column — u.width-sidebarWidth-1, flush with the pane's right edge
+		// — regardless of which row is widest on screen. Cut, never wrap: a
+		// wrapped line would push the counter and footer off screen, and
+		// notes appended after fit (and CJK titles, which fit counts in
+		// runes, not cells) can overflow.
+		lines := strings.Split(rowsBlock, "\n")
+		for i, l := range lines {
+			lines[i] = padCells(ansi.Truncate(l, rowsWidth, "…"), rowsWidth)
+		}
+		rowsBlock = strings.Join(lines, "\n")
+		n := u.currentNode()
+		var bd adapter.Breakdown
+		var tok int
+		var est bool
+		if n != nil {
+			bd, tok, est = n.SessionBreakdown, n.SessionTokens, n.TokensEstimated
+		}
+		side := sidebarLines(bd, tok, est)
+		preview := false
+		if rs.known {
+			side, preview = rangeLines(rs), true
+		}
+		var sb strings.Builder
+		for i, l := range side {
+			if i > 0 {
+				sb.WriteString("\n")
+			}
+			l = padCells(l, sidebarWidth)
+			if i == 1 && !preview { // the "thinking" bar, the first after the header
+				sb.WriteString(render(StyleClaude, l))
+			} else {
+				sb.WriteString(render(StyleMuted, l))
+			}
+		}
+		sideBlock := sb.String()
+		h := strings.Count(rowsBlock, "\n") + 1
+		if sh := strings.Count(sideBlock, "\n") + 1; sh > h {
+			h = sh
+		}
+		sep := render(StyleTool, strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, rowsBlock, sep, sideBlock))
+	} else {
+		b.WriteString(rowsBlock)
+	}
+	b.WriteString("\n")
+	if total > 0 {
+		b.WriteString(fmt.Sprintf("\n(%d/%d)\n", u.m.Cursor+1, total))
+	} else {
+		b.WriteString("\n")
+	}
+	b.WriteString(footer)
+	if u.busy != "" {
+		b.WriteString(u.busy + "\n")
+		if u.abandoning {
+			b.WriteString("this call is already billed; ctrl+c again to leave it running\n")
+		}
+	}
+	// A pane too narrow for the sidebar gets its range preview on the status
+	// line, in place of the range hint the footer already repeats.
+	if rs.known && !showSidebar && (u.status == "" || u.status == rangeHint) {
+		b.WriteString(rangeLine(rs) + "\n")
+	} else if u.status != "" {
+		b.WriteString(u.status + "\n")
+	}
+	return b.String()
+}
+
+// Run starts the overlay. liveAgent is the Herdr agent running `current`, and
+// send delivers text to it; both may be zero, in which case a fold-back at
+// that session's tip grafts like any other turn and the picker says so.
+func Run(a adapter.Adapter, repoRoot string, st *store.Store, sessions []adapter.Session, current, liveAgent string, send SendFunc, live LiveFunc, closePane ClosePaneFunc) error {
+	roots := tree.Build(sessions, st)
+	u := uiModel{m: New(roots), a: a, st: st, repoRoot: repoRoot, current: current, roots: roots,
+		liveAgent: liveAgent, send: send, live: live, closePane: closePane}
+	u.rebuild() // start scoped to the current session
+	_, err := tea.NewProgram(u, tea.WithAltScreen()).Run()
+	return err
+}

@@ -1,0 +1,150 @@
+// Package adapter defines the agent-neutral types and the interface every
+// agent adapter implements. Nothing in this package may know about Claude.
+package adapter
+
+import "time"
+
+// Kind is what produced an entry. Universal across agents: a human typed it,
+// the model said it, or the model called a tool.
+type Kind int
+
+const (
+	KindHuman Kind = iota
+	KindAssistant
+	KindToolCall
+	KindSummaryImport     // knowledge folded in from a branch
+	KindSummaryCompaction // a range of this line's own turns, shortened
+)
+
+func (k Kind) String() string {
+	switch k {
+	case KindAssistant:
+		return "assistant"
+	case KindToolCall:
+		return "tool"
+	case KindSummaryImport:
+		return "import"
+	case KindSummaryCompaction:
+		return "compaction"
+	default:
+		return "user"
+	}
+}
+
+// Node is one conversation turn.
+type Node struct {
+	ID    string // stable id of the turn within its session
+	Title string // single-line label, already truncated
+	Kind  Kind
+	At    time.Time
+	// AfterCompact marks the first node after a native /compact: the line's
+	// context starts here, everything before it is Claude Code's summary.
+	AfterCompact bool
+	// TurnTokens is a head node's turn size (§3.1 of the sidebar spec), 0 on
+	// other nodes; TurnEstimated marks the bytes fallback. Set for every
+	// turn in the transcript, not only the current line — a rewound
+	// stretch or a turn before a native /compact carries a size too.
+	TurnTokens    int
+	TurnEstimated bool
+}
+
+// Breakdown is a line's context split by type (§3.2 of the sidebar spec), in
+// the order Types names. Estimated means no real total scaled it.
+type Breakdown struct {
+	Tokens    [6]int
+	Estimated bool
+}
+
+// Types are Breakdown's labels, in order.
+var Types = [6]string{"thinking", "tool calls", "tool results", "replies", "typed", "injected"}
+
+// Session is one agent session: a linear path of turns.
+type Session struct {
+	ID      string
+	CWD     string
+	Path    string // where the transcript file was found
+	Title   string
+	Updated time.Time
+	Nodes   []Node // ordered root -> leaf
+	Live    bool   // a process currently holds it
+	Broken  bool   // transcript present but unreadable
+	// ContextTokens is what the line's last reply read (§3.1 of the
+	// undo/redo and context meter spec): 0 means unknown. An edited line with
+	// no reply of its own has 0 here; its estimate lives in the store.
+	ContextTokens int
+	// Breakdown is the current line's context split by type (§3.2).
+	Breakdown Breakdown
+}
+
+// Pane is what Herdr reports about the invoking pane.
+type Pane struct {
+	ID             string
+	CWD            string
+	Agent          string // agent kind Herdr detected, e.g. "claude"
+	AgentSessionID string // Herdr's belief about the session; a hint only
+}
+
+// Adapter is the whole agent-specific surface.
+type Adapter interface {
+	Name() string
+	Discover(repoRoot string) ([]Session, error)
+	Current(p Pane) (sessionID string, err error)
+	// Preview reports what a graft at atNode would carry, for the
+	// confirmation dialog. Computed without writing anything.
+	Preview(src Session, atNode string) (turns, entries int, size int64, err error)
+	Branch(src Session, atNode, dstCWD string) (newSessionID string, err error)
+	BranchSeeded(src Session, atNode, dstCWD, seed string) (newSessionID string, err error)
+	Resume(sessionID, cwd string, focus bool) error
+	Summarise(src Session, fromTurn, toTurn string) (string, error)
+	// Widen reports what a range covers once widened to whole turns.
+	Widen(src Session, fromNode, toNode string) (Span, error)
+	// WidenBranch is Widen for a branch at one node: its whole turn, on the
+	// line through node when that is not the session's current line.
+	WidenBranch(src Session, node string) (Span, error)
+	// Splice writes a new session with e applied to src's current line. The
+	// source is never modified.
+	Splice(src Session, e Edit, dstCWD string) (Spliced, error)
+}
+
+// Edit is one change to a line's context. From..To names a range of entries,
+// widened to whole turns, to remove; Seed, if set, takes its place. After,
+// used instead of a range, names an entry after whose turn Seed is inserted
+// and nothing is removed. A range with no Seed is a cut.
+//
+// Carry, set with From and After, makes the edit a move: the one turn of
+// Carry's From is written verbatim after After's turn (To is unused). Carry
+// naming the edited session itself moves the turn within its line; any other
+// session is only read, and dropping the turn from it is a separate cut.
+type Edit struct {
+	From, To string
+	After    string
+	Seed     string
+	Carry    *Session
+}
+
+// Span is a selection widened to whole turns.
+type Span struct {
+	First, Last int    // turn numbers; 0 is the preamble before the first prompt
+	End         string // the last entry of turn Last: where a summary stops reading
+	Turns       int    // the line's highest turn number
+	// EndNode is the last entry of turn Last that is a tree node. End is
+	// often not one (Claude Code ends a turn with a system entry), and an
+	// edge must name a node for tree.Build to hang the branch on it.
+	EndNode string
+	// RangeBytes and LineBytes are the marshalled size of the widened range
+	// and of the whole current line, used only to estimate a squash's
+	// context saving (§3.2).
+	RangeBytes, LineBytes int64
+}
+
+// Spliced is what a splice wrote.
+type Spliced struct {
+	SessionID string
+	Removed   int    // whole turns removed (a move: moved), not counting the preamble
+	After     string // the first entry after the edit, "" when nothing follows
+	First     string // a move: the first moved entry, under its new uuid; a squash or merge: its seed
+	// KeptBytes is the size of what was copied from existing transcripts and
+	// LineBytes the size of the line edited, both marshalled as read, so
+	// the caller can estimate the new line's context (§3.1).
+	KeptBytes, LineBytes int64
+}

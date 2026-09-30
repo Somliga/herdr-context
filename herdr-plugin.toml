@@ -1,0 +1,24 @@
+id = "herdr-context"
+name = "Herdr Context"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+description = "See where a Claude Code session's context goes, and edit it: branch, squash, drop, move, undo."
+platforms = ["linux", "macos"]
+
+[[build]]
+# Downloads this version's prebuilt binary (checksummed); builds from source
+# with Go only when that is not possible.
+command = ["sh", "scripts/fetch.sh"]
+
+[[actions]]
+id = "open"
+title = "Context: open"
+description = "Open this repository's Claude Code sessions as a tree, with their context."
+contexts = ["pane", "workspace"]
+command = ["./bin/herdr-context.exe", "open"]
+
+[[panes]]
+id = "tree"
+title = "Context"
+placement = "overlay"
+command = ["./bin/herdr-context.exe", "pane"]

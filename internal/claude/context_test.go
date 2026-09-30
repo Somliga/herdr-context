@@ -1,0 +1,683 @@
+package claude
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"herdr-context/internal/adapter"
+)
+
+// lines parses JSONL strings through ParseFile on a temp file, so numbers
+// decode as json.Number exactly as in production.
+func lines(t *testing.T, raw ...string) []Entry {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "session.jsonl")
+	if err := os.WriteFile(p, []byte(strings.Join(raw, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	es, skipped, err := ParseFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skipped > 0 {
+		t.Fatalf("%d malformed lines", skipped)
+	}
+	return es
+}
+
+// jline builds one JSONL line from a map, so fixtures never hand-escape
+// strings.
+func jline(t *testing.T, v map[string]any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func usage(ctx, out int) map[string]any {
+	return map[string]any{
+		"input_tokens":                0,
+		"cache_read_input_tokens":     ctx,
+		"cache_creation_input_tokens": 0,
+		"output_tokens":               out,
+	}
+}
+
+// twoTurns is the shared fixture: turn 1 is p1 -> a1 (thinking + text,
+// signature-only thinking) -> a1t (a split tool-call sharing a1's message id
+// and usage) -> r1 (its tool result) -> a2 (the turn's real reply) -> d1 (the
+// turn_duration entry Claude Code writes at the end of a turn). Turn 2 is p2
+// -> a3.
+func twoTurns(t *testing.T) []Entry {
+	sig := strings.Repeat("s", 400)
+	txt := strings.Repeat("t", 40)
+	res := strings.Repeat("r", 800)
+
+	l1 := jline(t, map[string]any{
+		"type": "user", "uuid": "p1", "parentUuid": nil,
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T10:00:00Z",
+		"origin":    map[string]any{"kind": "human"},
+		"message":   map[string]any{"role": "user", "content": "first"},
+	})
+	l2 := jline(t, map[string]any{
+		"type": "assistant", "uuid": "a1", "parentUuid": "p1",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T10:00:01Z", "requestId": "q1",
+		"message": map[string]any{
+			"role": "assistant", "id": "m1",
+			"content": []any{
+				map[string]any{"type": "thinking", "thinking": "", "signature": sig},
+				map[string]any{"type": "text", "text": txt},
+			},
+			"usage": usage(1000, 300),
+		},
+	})
+	l3 := jline(t, map[string]any{
+		"type": "assistant", "uuid": "a1t", "parentUuid": "a1",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T10:00:02Z", "requestId": "q1",
+		"message": map[string]any{
+			"role": "assistant", "id": "m1",
+			"content": []any{
+				map[string]any{"type": "tool_use", "id": "tu1", "name": "Bash", "input": map[string]any{"command": "ls"}},
+			},
+			"usage": usage(1000, 300),
+		},
+	})
+	l4 := jline(t, map[string]any{
+		"type": "user", "uuid": "r1", "parentUuid": "a1t",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T10:00:03Z",
+		"message": map[string]any{
+			"role": "user",
+			"content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "tu1", "content": res},
+			},
+		},
+		"toolUseResult": map[string]any{"stdout": res},
+	})
+	l5 := jline(t, map[string]any{
+		"type": "assistant", "uuid": "a2", "parentUuid": "r1",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T10:00:04Z", "requestId": "q2",
+		"message": map[string]any{
+			"role": "assistant", "id": "m2",
+			"content": []any{map[string]any{"type": "text", "text": "reply two"}},
+			"usage":   usage(1600, 50),
+		},
+	})
+	l6 := jline(t, map[string]any{
+		"type": "system", "subtype": "turn_duration", "uuid": "d1", "parentUuid": "a2",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T10:00:05Z", "durationMs": 1234,
+	})
+	l7 := jline(t, map[string]any{
+		"type": "user", "uuid": "p2", "parentUuid": "d1",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T10:00:06Z",
+		"origin":    map[string]any{"kind": "human"},
+		"message":   map[string]any{"role": "user", "content": "second"},
+	})
+	l8 := jline(t, map[string]any{
+		"type": "assistant", "uuid": "a3", "parentUuid": "p2",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T10:00:07Z", "requestId": "q3",
+		"message": map[string]any{
+			"role": "assistant", "id": "m3",
+			"content": []any{map[string]any{"type": "text", "text": "reply three"}},
+			"usage":   usage(2100, 40),
+		},
+	})
+	return lines(t, l1, l2, l3, l4, l5, l6, l7, l8)
+}
+
+// twoTurnsWithoutUsage is twoTurns with every "usage" object removed.
+func twoTurnsWithoutUsage(t *testing.T) []Entry {
+	es := twoTurns(t)
+	var out []Entry
+	for _, e := range es {
+		if msg, ok := e.Raw["message"].(map[string]any); ok {
+			delete(msg, "usage")
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// duplicateOfA1t is another physical copy of twoTurns' a1t entry: same
+// uuid, same message id and usage. A real transcript never repeats a uuid;
+// this simulates the artifact and checks it changes nothing.
+func duplicateOfA1t(t *testing.T) Entry {
+	l := jline(t, map[string]any{
+		"type": "assistant", "uuid": "a1t", "parentUuid": "a1",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T10:00:02Z", "requestId": "q1",
+		"message": map[string]any{
+			"role": "assistant", "id": "m1",
+			"content": []any{
+				map[string]any{"type": "tool_use", "id": "tu1", "name": "Bash", "input": map[string]any{"command": "ls"}},
+			},
+			"usage": usage(1000, 300),
+		},
+	})
+	es := lines(t, l)
+	return es[0]
+}
+
+// compactedMidTurn: turn 1's reply ctx 90000, then a native compact_boundary
+// mid-turn (no new prompt), then its continuation reply ctx 8000; turn 2 has
+// its own prompt and a reply ctx 9000. Turn 1's real end would need to reach
+// across the boundary, which invalidates it: bytes, ~.
+func compactedMidTurn(t *testing.T) []Entry {
+	l1 := jline(t, map[string]any{
+		"type": "user", "uuid": "p1", "parentUuid": nil,
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T11:00:00Z",
+		"origin":    map[string]any{"kind": "human"},
+		"message":   map[string]any{"role": "user", "content": "one"},
+	})
+	l2 := jline(t, map[string]any{
+		"type": "assistant", "uuid": "a1a", "parentUuid": "p1",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T11:00:01Z", "requestId": "qa",
+		"message": map[string]any{
+			"role": "assistant", "id": "ma",
+			"content": []any{map[string]any{"type": "text", "text": "reply pre-compact"}},
+			"usage":   usage(90000, 500),
+		},
+	})
+	l3 := jline(t, map[string]any{
+		"type": "system", "subtype": "compact_boundary", "uuid": "cb",
+		"parentUuid": nil, "logicalParentUuid": "a1a",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T11:00:02Z",
+		"content":   "Conversation compacted", "level": "info", "isMeta": false,
+		"compactMetadata": map[string]any{"trigger": "auto", "preTokens": 90000},
+	})
+	l4 := jline(t, map[string]any{
+		"type": "user", "uuid": "cs", "parentUuid": "cb",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp":        "2026-01-01T11:00:03Z",
+		"isCompactSummary": true, "isVisibleInTranscriptOnly": true,
+		"message": map[string]any{"role": "user", "content": "This session is being continued from a previous conversation that ran out of context. Summary: turn one."},
+	})
+	l5 := jline(t, map[string]any{
+		"type": "assistant", "uuid": "a1b", "parentUuid": "cs",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T11:00:04Z", "requestId": "qb",
+		"message": map[string]any{
+			"role": "assistant", "id": "mb",
+			"content": []any{map[string]any{"type": "text", "text": "continuation reply"}},
+			"usage":   usage(8000, 60),
+		},
+	})
+	l6 := jline(t, map[string]any{
+		"type": "user", "uuid": "p2", "parentUuid": "a1b",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T11:00:05Z",
+		"origin":    map[string]any{"kind": "human"},
+		"message":   map[string]any{"role": "user", "content": "two"},
+	})
+	l7 := jline(t, map[string]any{
+		"type": "assistant", "uuid": "a3", "parentUuid": "p2",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T11:00:06Z", "requestId": "qc",
+		"message": map[string]any{
+			"role": "assistant", "id": "mc",
+			"content": []any{map[string]any{"type": "text", "text": "reply three"}},
+			"usage":   usage(9000, 70),
+		},
+	})
+	return lines(t, l1, l2, l3, l4, l5, l6, l7)
+}
+
+// rewound: a prompt p1, its reply a1 (a tool call and its result), then a
+// second prompt p1b whose parent is p1's own parent — the user rewound
+// before replying to p1. The tip's line holds p1b alone; a1's tool result
+// must not count.
+func rewound(t *testing.T) []Entry {
+	l1 := jline(t, map[string]any{
+		"type": "user", "uuid": "p1", "parentUuid": nil,
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T12:00:00Z",
+		"origin":    map[string]any{"kind": "human"},
+		"message":   map[string]any{"role": "user", "content": "first prompt"},
+	})
+	l2 := jline(t, map[string]any{
+		"type": "assistant", "uuid": "a1", "parentUuid": "p1",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T12:00:01Z", "requestId": "qx",
+		"message": map[string]any{
+			"role": "assistant",
+			"content": []any{
+				map[string]any{"type": "tool_use", "id": "tux", "name": "Bash", "input": map[string]any{"command": "ls"}},
+			},
+		},
+	})
+	l3 := jline(t, map[string]any{
+		"type": "user", "uuid": "r1", "parentUuid": "a1",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T12:00:02Z",
+		"message": map[string]any{
+			"role": "user",
+			"content": []any{
+				map[string]any{"type": "tool_result", "tool_use_id": "tux", "content": "abandoned branch output"},
+			},
+		},
+		"toolUseResult": map[string]any{"stdout": "abandoned branch output"},
+	})
+	l4 := jline(t, map[string]any{
+		"type": "user", "uuid": "p1b", "parentUuid": nil,
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T12:00:03Z",
+		"origin":    map[string]any{"kind": "human"},
+		"message":   map[string]any{"role": "user", "content": "rewound prompt"},
+	})
+	return lines(t, l1, l2, l3, l4)
+}
+
+// fourTurnsWithAGapInB is four turns, each a prompt then a reply: A's reply
+// has real usage (end 1000); B's reply has no usage at all (an edited or
+// synthetic reply); C's reply has real usage (end 2100) but must still fall
+// back, because B lacks one; D's reply has real usage (end 2600). D's own
+// growth (2600-2100=500) must be computed from C's real end, not from A's —
+// C falling back must not erase the real end its own reply reached.
+func fourTurnsWithAGapInB(t *testing.T) []Entry {
+	human := func(uuid string, parent any, text string) string {
+		return jline(t, map[string]any{
+			"type": "user", "uuid": uuid, "parentUuid": parent,
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"origin":  map[string]any{"kind": "human"},
+			"message": map[string]any{"role": "user", "content": text},
+		})
+	}
+	reply := func(uuid, parent, msgID string, u map[string]any) string {
+		msg := map[string]any{
+			"role":    "assistant",
+			"id":      msgID,
+			"content": []any{map[string]any{"type": "text", "text": "ok"}},
+		}
+		if u != nil {
+			msg["usage"] = u
+		}
+		return jline(t, map[string]any{
+			"type": "assistant", "uuid": uuid, "parentUuid": parent,
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"requestId": "q-" + uuid,
+			"message":   msg,
+		})
+	}
+	return lines(t,
+		human("pa", nil, "a"),
+		reply("aa", "pa", "ma", usage(1000, 0)),
+		human("pb", "aa", "b"),
+		reply("ab", "pb", "mb", nil), // no usage at all: turn B has no usage-bearing reply
+		human("pc", "ab", "c"),
+		reply("ac", "pc", "mc", usage(2100, 0)),
+		human("pd", "ac", "d"),
+		reply("ad", "pd", "md", usage(2600, 0)),
+	)
+}
+
+func TestTurnSizesAreRealGrowth(t *testing.T) {
+	es := twoTurns(t)
+	nodes := Entries(es)
+	turnSizes(es, nodes)
+	got := map[string]adapter.Node{}
+	for _, n := range nodes {
+		got[n.ID] = n
+	}
+	// end(turn) = its last usage-bearing reply's ctx + output_tokens.
+	// turn 1 ends at a2: 1600 + 50 = 1650; turn 2 at a3: 2100 + 40 = 2140.
+	if n := got["p1"]; n.TurnTokens != 1650 || n.TurnEstimated {
+		t.Fatalf("turn 1 = %d est %v, want 1650 real", n.TurnTokens, n.TurnEstimated)
+	}
+	if n := got["p2"]; n.TurnTokens != 490 || n.TurnEstimated {
+		t.Fatalf("turn 2 = %d est %v, want 2140 - 1650 = 490 real", n.TurnTokens, n.TurnEstimated)
+	}
+	if got["a1"].TurnTokens != 0 {
+		t.Fatal("a body node carries a turn size")
+	}
+}
+
+func TestTurnSizesFallBackToBytesWithoutUsage(t *testing.T) {
+	es := twoTurnsWithoutUsage(t)
+	nodes := Entries(es)
+	turnSizes(es, nodes)
+	for _, n := range nodes {
+		if n.ID == "p1" && (!n.TurnEstimated || n.TurnTokens <= 0) {
+			t.Fatalf("p1 = %d est %v, want a positive ~ from bytes", n.TurnTokens, n.TurnEstimated)
+		}
+	}
+}
+
+func TestTurnSizesFallBackAcrossACompactBoundary(t *testing.T) {
+	es := compactedMidTurn(t)
+	nodes := Entries(es)
+	turnSizes(es, nodes)
+	for _, n := range nodes {
+		if n.ID == "p1" && (!n.TurnEstimated || n.TurnTokens <= 0 || n.TurnTokens > 90000) {
+			t.Fatalf("p1 = %d est %v, want a positive bytes estimate", n.TurnTokens, n.TurnEstimated)
+		}
+	}
+}
+
+func TestTurnSizesGrowthSurvivesATurnThatFellBackForItsPredecessor(t *testing.T) {
+	es := fourTurnsWithAGapInB(t)
+	nodes := Entries(es)
+	turnSizes(es, nodes)
+	got := map[string]adapter.Node{}
+	for _, n := range nodes {
+		got[n.ID] = n
+	}
+	if n := got["pa"]; n.TurnTokens != 1000 || n.TurnEstimated {
+		t.Fatalf("A = %d est %v, want 1000 real", n.TurnTokens, n.TurnEstimated)
+	}
+	if n := got["pb"]; !n.TurnEstimated {
+		t.Fatalf("B = %d est %v, want estimated (no usage-bearing reply)", n.TurnTokens, n.TurnEstimated)
+	}
+	if n := got["pc"]; !n.TurnEstimated {
+		t.Fatalf("C = %d est %v, want estimated (B has none)", n.TurnTokens, n.TurnEstimated)
+	}
+	if n := got["pd"]; n.TurnTokens != 500 || n.TurnEstimated {
+		t.Fatalf("D = %d est %v, want 2600-2100 = 500 real, from C's real end even though C itself fell back", n.TurnTokens, n.TurnEstimated)
+	}
+}
+
+// clampCase is one reply whose visible text alone outweighs its
+// output_tokens, so an unclamped thinking share would go negative.
+func clampCase(t *testing.T) []Entry {
+	l1 := jline(t, map[string]any{
+		"type": "user", "uuid": "cp", "parentUuid": nil,
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T13:00:00Z",
+		"origin":    map[string]any{"kind": "human"},
+		"message":   map[string]any{"role": "user", "content": "go"},
+	})
+	l2 := jline(t, map[string]any{
+		"type": "assistant", "uuid": "ca", "parentUuid": "cp",
+		"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+		"timestamp": "2026-01-01T13:00:01Z", "requestId": "qz",
+		"message": map[string]any{
+			"role": "assistant", "id": "mz",
+			"content": []any{map[string]any{"type": "text", "text": strings.Repeat("z", 200)}},
+			"usage":   usage(500, 1),
+		},
+	})
+	return lines(t, l1, l2)
+}
+
+func TestBreakdownClampsThinkingToZero(t *testing.T) {
+	es := clampCase(t)
+	b := breakdown(es, 0)
+	for i, v := range b.Tokens {
+		if v < 0 {
+			t.Fatalf("type %d is negative: %d, want the thinking clamp to floor it at 0", i, v)
+		}
+	}
+}
+
+func TestBreakdownSplitsTheLineAndSumsToItsNumber(t *testing.T) {
+	es := twoTurns(t)
+	b := breakdown(es, 2100)
+	sum := 0
+	for _, v := range b.Tokens {
+		sum += v
+	}
+	if sum < 2095 || sum > 2105 || b.Estimated {
+		t.Fatalf("sum %d est %v, want ~2100 real", sum, b.Estimated)
+	}
+	for i, v := range b.Tokens {
+		if v < 0 {
+			t.Fatalf("type %d is negative: %d", i, v)
+		}
+	}
+	// thinking: per reply, output - visible bytes/4, once per message id:
+	// m1: 300 - (40 text + tool_use block bytes)/4 > 0.
+	if b.Tokens[0] == 0 {
+		t.Fatal("no thinking share despite output_tokens beyond the visible blocks")
+	}
+}
+
+// withEntry inserts e right after the entry whose uuid is at, so a fixture
+// can gain a duplicate without moving the tip (which tipOf always finds at
+// the end of file order).
+func withEntry(es []Entry, at string, e Entry) []Entry {
+	out := make([]Entry, 0, len(es)+1)
+	for _, x := range es {
+		out = append(out, x)
+		if x.UUID() == at {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func TestBreakdownCountsASplitReplysThinkingOnce(t *testing.T) {
+	es := twoTurns(t)
+	once := breakdown(es, 0).Tokens[0]
+	doubled := breakdown(withEntry(es, "a1t", duplicateOfA1t(t)), 0).Tokens[0]
+	if doubled != once {
+		t.Fatalf("thinking %d with another split entry, %d without: counted per entry", doubled, once)
+	}
+}
+
+// TestBreakdownGroupsThinkingByMessageIDNotUUID hand-computes twoTurns'
+// thinking share directly from its three replies' output_tokens and visible
+// bytes, so it is load-bearing on grouping by message.id: a1 and a1t are
+// two different uuids sharing one message id and usage, and a version that
+// grouped by uuid instead would double-count m1's output_tokens (once for
+// each of the two entries) instead of splitting one out across both.
+func TestBreakdownGroupsThinkingByMessageIDNotUUID(t *testing.T) {
+	es := twoTurns(t)
+	got := breakdown(es, 0).Tokens[0]
+
+	textBlock := func(s string) block {
+		return block{typ: "text", raw: map[string]any{"type": "text", "text": s}}
+	}
+	toolBlock := block{typ: "tool_use", raw: map[string]any{
+		"type": "tool_use", "id": "tu1", "name": "Bash", "input": map[string]any{"command": "ls"},
+	}}
+
+	// m1 (a1's text + a1t's tool_use, sharing one usage), m2 (a2), m3 (a3).
+	m1Visible := blockBytes(textBlock(strings.Repeat("t", 40)))/4 + blockBytes(toolBlock)/4
+	m2Visible := blockBytes(textBlock("reply two")) / 4
+	m3Visible := blockBytes(textBlock("reply three")) / 4
+
+	sum := 0.0
+	for _, think := range []float64{300 - m1Visible, 50 - m2Visible, 40 - m3Visible} {
+		if think > 0 {
+			sum += think
+		}
+	}
+	want := int(sum)
+	if got != want {
+		t.Fatalf("thinking = %d, want %d (out - visible bytes/4, grouped by message.id)", got, want)
+	}
+}
+
+func TestBreakdownWithoutANumberIsEstimated(t *testing.T) {
+	b := breakdown(twoTurnsWithoutUsage(t), 0)
+	if !b.Estimated || b.Tokens[2] == 0 {
+		t.Fatalf("got %+v, want estimated shares with tool results", b)
+	}
+}
+
+func TestBreakdownIgnoresEverythingOffTheCurrentLine(t *testing.T) {
+	es := rewound(t)
+	if b := breakdown(es, 0); b.Tokens[2] != 0 {
+		t.Fatalf("tool results %d from a rewound stretch", b.Tokens[2])
+	}
+}
+
+// A spliced line has no usage anywhere (stripUsage), so thinking falls back
+// to its signature bytes × 0.5: twoTurns' one thinking block carries a
+// 400-byte signature.
+func TestBreakdownThinkingFromSignaturesWithoutUsage(t *testing.T) {
+	got := breakdown(twoTurnsWithoutUsage(t), 0).Tokens[0]
+	if got != 200 {
+		t.Fatalf("thinking = %d, want 400 signature bytes × 0.5 = 200", got)
+	}
+}
+
+// splitOutputs is one reply split across two entries of one message id, the
+// first a streaming entry with a partial output_tokens (20), the second the
+// final count (300). The first entry's text block is small, so thinking is
+// output - visible and only a max over the id's entries gets 300 in.
+func splitOutputs(t *testing.T, first, second int) []Entry {
+	entry := func(uuid, parent string, content []any, out int) string {
+		return jline(t, map[string]any{
+			"type": "assistant", "uuid": uuid, "parentUuid": parent,
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"timestamp": "2026-01-01T14:00:01Z", "requestId": "qs",
+			"message": map[string]any{
+				"role": "assistant", "id": "ms", "content": content,
+				"usage": usage(1000, out),
+			},
+		})
+	}
+	return lines(t,
+		jline(t, map[string]any{
+			"type": "user", "uuid": "sp", "parentUuid": nil,
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"timestamp": "2026-01-01T14:00:00Z",
+			"origin":    map[string]any{"kind": "human"},
+			"message":   map[string]any{"role": "user", "content": "go"},
+		}),
+		entry("sa", "sp", []any{map[string]any{"type": "thinking", "thinking": "", "signature": "sig"}}, first),
+		entry("sb", "sa", []any{map[string]any{"type": "text", "text": "ok"}}, second),
+	)
+}
+
+func TestBreakdownTakesTheLargestOutputOfASplitReply(t *testing.T) {
+	es := splitOutputs(t, 20, 300)
+	visible := blockBytes(block{typ: "text", raw: map[string]any{"type": "text", "text": "ok"}}) / 4
+	if got, want := breakdown(es, 0).Tokens[0], int(300-visible); got != want {
+		t.Fatalf("thinking = %d, want %d (the id's largest output_tokens, 300)", got, want)
+	}
+}
+
+func TestTurnSizesTakeTheLargestOutputOfTheEndingReply(t *testing.T) {
+	es := splitOutputs(t, 300, 20)
+	nodes := Entries(es)
+	turnSizes(es, nodes)
+	for _, n := range nodes {
+		if n.ID == "sp" && (n.TurnTokens != 1300 || n.TurnEstimated) {
+			t.Fatalf("turn = %d est %v, want 1000 + 300 real", n.TurnTokens, n.TurnEstimated)
+		}
+	}
+}
+
+// rewoundTurn: p1 ends at 10k; p2 (child of p1's reply) ends at 12k and is
+// then abandoned — the user rewinds and sends p2b as another child of p1's
+// reply, ending at 20k. p2b grew the line p1 left, not the abandoned p2's.
+func rewoundTurn(t *testing.T) []Entry {
+	human := func(uuid string, parent any) string {
+		return jline(t, map[string]any{
+			"type": "user", "uuid": uuid, "parentUuid": parent,
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"timestamp": "2026-01-01T15:00:00Z",
+			"origin":    map[string]any{"kind": "human"},
+			"message":   map[string]any{"role": "user", "content": uuid},
+		})
+	}
+	reply := func(uuid, parent string, ctx int) string {
+		return jline(t, map[string]any{
+			"type": "assistant", "uuid": uuid, "parentUuid": parent,
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"timestamp": "2026-01-01T15:00:01Z", "requestId": "q-" + uuid,
+			"message": map[string]any{
+				"role": "assistant", "id": "m-" + uuid,
+				"content": []any{map[string]any{"type": "text", "text": "ok"}},
+				"usage":   usage(ctx, 0),
+			},
+		})
+	}
+	return lines(t,
+		human("p1", nil), reply("a1", "p1", 10000),
+		human("p2", "a1"), reply("a2", "p2", 12000),
+		human("p2b", "a1"), reply("a2b", "p2b", 20000),
+	)
+}
+
+func TestTurnSizesGrowFromTheChainParentNotTheFilePredecessor(t *testing.T) {
+	es := rewoundTurn(t)
+	nodes := Entries(es)
+	turnSizes(es, nodes)
+	for _, n := range nodes {
+		if n.ID == "p2b" && (n.TurnTokens != 10000 || n.TurnEstimated) {
+			t.Fatalf("p2b = %d est %v, want 20000 - 10000 real (from p1, its chain parent)", n.TurnTokens, n.TurnEstimated)
+		}
+	}
+}
+
+func TestBlockBytesDoNotEscapeHTML(t *testing.T) {
+	b := block{typ: "text", raw: map[string]any{"type": "text", "text": "<&>"}}
+	if got, want := blockBytes(b), float64(len(`{"text":"<&>","type":"text"}`)); got != want {
+		t.Fatalf("%v bytes, want %v: < > & counted escaped", got, want)
+	}
+}
+
+// compactedBetweenTurns: p1 ends at 20k, then a native /compact
+// (compact_boundary, its summary), then p2 — a child of the summary —
+// ends at 30k. The line p2 grew is the compacted one, not p1's 20k: ~.
+func compactedBetweenTurns(t *testing.T) []Entry {
+	reply := func(uuid, parent string, ctx int) string {
+		return jline(t, map[string]any{
+			"type": "assistant", "uuid": uuid, "parentUuid": parent,
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"timestamp": "2026-01-01T16:00:01Z", "requestId": "q-" + uuid,
+			"message": map[string]any{
+				"role": "assistant", "id": "m-" + uuid,
+				"content": []any{map[string]any{"type": "text", "text": "ok"}},
+				"usage":   usage(ctx, 0),
+			},
+		})
+	}
+	human := func(uuid string, parent any) string {
+		return jline(t, map[string]any{
+			"type": "user", "uuid": uuid, "parentUuid": parent,
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"timestamp": "2026-01-01T16:00:00Z",
+			"origin":    map[string]any{"kind": "human"},
+			"message":   map[string]any{"role": "user", "content": uuid},
+		})
+	}
+	return lines(t,
+		human("p1", nil), reply("a1", "p1", 20000),
+		jline(t, map[string]any{
+			"type": "system", "subtype": "compact_boundary", "uuid": "cb",
+			"parentUuid": nil, "logicalParentUuid": "a1",
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"timestamp": "2026-01-01T16:00:02Z",
+			"content":   "Conversation compacted", "level": "info", "isMeta": false,
+			"compactMetadata": map[string]any{"trigger": "manual", "preTokens": 20000},
+		}),
+		jline(t, map[string]any{
+			"type": "user", "uuid": "cs", "parentUuid": "cb",
+			"sessionId": "S", "cwd": "/r", "version": "2.1.278",
+			"timestamp":        "2026-01-01T16:00:03Z",
+			"isCompactSummary": true, "isVisibleInTranscriptOnly": true,
+			"message": map[string]any{"role": "user", "content": "This session is being continued from a previous conversation that ran out of context. Summary: one."},
+		}),
+		human("p2", "cs"), reply("a2", "p2", 30000),
+	)
+}
+
+func TestTurnSizesFallBackWhenTheChainCrossesACompactBoundary(t *testing.T) {
+	es := compactedBetweenTurns(t)
+	nodes := Entries(es)
+	turnSizes(es, nodes)
+	for _, n := range nodes {
+		if n.ID == "p2" && !n.TurnEstimated {
+			t.Fatalf("p2 = %d real, want ~ (a compact_boundary lies on its chain)", n.TurnTokens)
+		}
+	}
+}
